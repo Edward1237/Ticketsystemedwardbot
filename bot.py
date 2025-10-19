@@ -690,6 +690,7 @@ class TicketPanelView(discord.ui.View):
             await channel.send(embed=embed, content=f"{interaction.user.mention} {staff_role.mention}", view=TicketCloseView(bot=self.bot))
 
     # --- UPDATED TRYOUT FUNCTION ---
+# --- UPDATED TRYOUT FUNCTION (No message deletion) ---
     @discord.ui.button(label="Tryout", style=discord.ButtonStyle.success, emoji="⚔️", custom_id="panel:tryout")
     async def tryout_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True, thinking=True) # Acknowledge interaction
@@ -703,7 +704,7 @@ class TicketPanelView(discord.ui.View):
         try:
              await channel.send(f"{interaction.user.mention} {staff_role.mention}", delete_after=1) # Initial ping
         except Exception:
-            pass # Ignore if ping fails for any reason
+            pass # Ignore if ping fails
 
         try:
             # 1. Ask for Roblox Username
@@ -730,16 +731,18 @@ class TicketPanelView(discord.ui.View):
 
             def check_stats(m): return m.channel == channel and m.author == interaction.user and len(m.attachments) > 0 and m.attachments[0].content_type is not None and m.attachments[0].content_type.startswith('image')
             stats_msg = await self.bot.wait_for('message', check=check_stats, timeout=300.0) # 5 minutes
-            stats_screenshot_url = stats_msg.attachments[0].url
 
-            # 3. Delete all the prompt messages
-            try:
-                await bot_msg_1.delete()
-                await username_msg.delete()
-                await bot_msg_2.delete()
-                await stats_msg.delete()
-            except (discord.NotFound, discord.Forbidden):
-                pass # A message was already deleted or we lack perms, just continue
+            # --- Extract URL and print for debugging ---
+            stats_screenshot_url = None
+            if stats_msg.attachments:
+                stats_screenshot_url = stats_msg.attachments[0].url
+                print(f"Extracted Stats Screenshot URL: {stats_screenshot_url}") # Check server logs for this
+            else:
+                 print("Warning: No attachment found on stats message.")
+
+
+            # --- MESSAGE DELETION BLOCK IS REMOVED ---
+
 
             # 4. Send the final, clean embed
             success_embed = discord.Embed(
@@ -748,7 +751,17 @@ class TicketPanelView(discord.ui.View):
                 color=discord.Color.brand_green()
             )
             success_embed.add_field(name="Roblox Username", value=roblox_username, inline=False)
-            success_embed.set_image(url=stats_screenshot_url)
+
+            # --- Set the image, handle potential errors ---
+            if stats_screenshot_url:
+                try:
+                    success_embed.set_image(url=stats_screenshot_url)
+                except Exception as e:
+                    print(f"Error setting image URL ({stats_screenshot_url}): {e}")
+                    success_embed.add_field(name="Stats Image Error", value="Could not embed the provided image.", inline=False)
+            else:
+                 success_embed.add_field(name="Stats Image", value="No image provided or found.", inline=False)
+
 
             # This "starts" the ticket by adding the management buttons
             await channel.send(embed=success_embed, view=TicketCloseView(bot=self.bot))
@@ -776,7 +789,6 @@ class TicketPanelView(discord.ui.View):
                 await channel.send(embed=create_embed("Error", "An unexpected error occurred during the application process. Please try again or create a standard ticket.", discord.Color.red()))
             except Exception:
                  pass # Ignore if sending error message fails
-
     # --- END UPDATED TRYOUT FUNCTION ---
 
     @discord.ui.button(label="Report a User", style=discord.ButtonStyle.danger, emoji="🚨", custom_id="panel:report")
