@@ -1,3 +1,5 @@
+# ticket_bot.py (or bot.py)
+
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
@@ -64,7 +66,7 @@ class TicketBot(commands.Bot):
         if not self.persistent_views_added:
             self.add_view(TicketPanelView(bot=self))
             self.add_view(TicketCloseView(bot=self))
-            self.add_view(AppealReviewView(bot=self)) # <-- ADDED FOR APPEAL BUTTONS
+            self.add_view(AppealReviewView(bot=self)) # <-- For appeal buttons
             self.persistent_views_added = True
         
         # Sync slash commands
@@ -243,7 +245,7 @@ async def generate_transcript(channel: discord.TextChannel):
 
     return io.BytesIO(transcript_content.encode('utf-8'))
 
-# --- NEW MODAL CLASS ---
+# --- APPEAL REASON MODAL CLASS ---
 class AppealReasonModal(discord.ui.Modal):
     def __init__(self, bot: TicketBot, action: str, original_message: discord.Message, guild: discord.Guild, appealing_user_id: int):
         super().__init__(title=f"Appeal {action} Reason")
@@ -323,7 +325,7 @@ class AppealReasonModal(discord.ui.Modal):
         print(f"Error in AppealReasonModal: {error}")
         await interaction.followup.send("An unexpected error occurred.", ephemeral=True)
 
-# --- NEW PERSISTENT VIEW FOR STAFF ---
+# --- PERSISTENT APPEAL REVIEW VIEW FOR STAFF ---
 class AppealReviewView(discord.ui.View):
     """The Approve/Reject buttons for the appeal in the staff channel."""
     def __init__(self, bot: TicketBot = None):
@@ -433,16 +435,11 @@ class ConfirmAppealView(discord.ui.View):
         embed.add_field(name="2. Why should you be unblacklisted?", value=f"```{self.answers['q2']}```", inline=False)
         embed.add_field(name="3. Supporting Proof", value=self.answers['proof'], inline=False)
         
-        # --- NEW LINES ---
         embed.set_footer(text=f"User ID: {interaction.user.id}") # Add user ID for the buttons
         view_to_send = AppealReviewView(bot=self.bot)
-        # --- END NEW LINES ---
 
         try:
-            # --- MODIFIED LINE ---
             await self.appeal_channel.send(embed=embed, view=view_to_send) # Attach the new view
-            # --- END MODIFIED LINE ---
-            
             await interaction.followup.send(embed=create_embed("✅ Appeal Submitted", "Your appeal has been sent to the staff. You will be contacted if it is approved.", discord.Color.green()))
         except discord.Forbidden:
             await interaction.followup.send(embed=create_embed("Error", "I could not submit your appeal to the staff channel. Please contact an admin.", discord.Color.red()))
@@ -459,12 +456,10 @@ class ConfirmAppealView(discord.ui.View):
         # This function is called if the user doesn't click Submit/Cancel in time
         for item in self.children:
             item.disabled = True
-        # Try to edit the message, but it might fail if DMs are closed
         try:
             await self.message.edit(embed=create_embed("Appeal Timed Out", "You took too long to respond. The appeal has been cancelled.", discord.Color.red()), view=self)
         except:
             pass
-        # Clean up messages anyway
         await self.cleanup(None)
 
 class AppealStartView(discord.ui.View):
@@ -500,7 +495,6 @@ class AppealStartView(discord.ui.View):
     async def start_appeal(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer() # Acknowledge the button click
 
-        # Disable the button
         for item in self.children:
             item.disabled = True
         await interaction.edit_original_response(view=self)
@@ -510,7 +504,6 @@ class AppealStartView(discord.ui.View):
         messages_to_delete = [interaction.message] # Start tracking messages to delete
         answers = {}
         
-        # Check if appeal channel is set up
         settings = self.bot.get_guild_settings(self.guild.id)
         appeal_channel_id = settings.get("appeal_channel")
         if not appeal_channel_id:
@@ -601,7 +594,7 @@ class TicketPanelView(discord.ui.View):
             
         settings = self.bot.get_guild_settings(interaction.guild.id)
         
-        # --- NEW: BLACKLIST CHECK ---
+        # --- BLACKLIST CHECK ---
         blacklist = settings.get("blacklist", {})
         user_id_str = str(interaction.user.id)
         
@@ -636,6 +629,7 @@ class TicketPanelView(discord.ui.View):
             )
             await channel.send(embed=embed, content=f"{interaction.user.mention} {staff_role.mention}", view=TicketCloseView(bot=self.bot))
 
+    # --- UPDATED TRYOUT FUNCTION ---
     @discord.ui.button(label="Tryout", style=discord.ButtonStyle.success, emoji="⚔️", custom_id="panel:tryout")
     async def tryout_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True, thinking=True) # Acknowledge interaction
@@ -649,28 +643,42 @@ class TicketPanelView(discord.ui.View):
         await channel.send(f"{interaction.user.mention} {staff_role.mention}", delete_after=1) # Initial ping
         
         try:
+            # 1. Ask for Roblox Username
             username_embed = discord.Embed(
                 title="⚔️ Tryout Application - Step 1/2",
                 description="Please reply to this message with your **Roblox Username**.",
                 color=discord.Color.green()
             ).set_footer(text="You have 5 minutes to reply.")
-            await channel.send(embed=username_embed)
+            
+            bot_msg_1 = await channel.send(embed=username_embed)
 
             def check_username(m): return m.channel == channel and m.author == interaction.user
             username_msg = await self.bot.wait_for('message', check=check_username, timeout=300.0) # 5 minutes
             roblox_username = username_msg.content
 
+            # 2. Ask for Stats Screenshot
             stats_embed = discord.Embed(
                 title="⚔️ Tryout Application - Step 2/2",
                 description=f"Great, `{roblox_username}`.\n\nNow, please send a **screenshot of your stats** from Roblox.",
                 color=discord.Color.green()
             ).set_footer(text="You have 5 minutes to reply. The message MUST contain an image.")
-            await channel.send(embed=stats_embed)
+            
+            bot_msg_2 = await channel.send(embed=stats_embed)
 
             def check_stats(m): return m.channel == channel and m.author == interaction.user and len(m.attachments) > 0 and m.attachments[0].content_type.startswith('image')
             stats_msg = await self.bot.wait_for('message', check=check_stats, timeout=300.0) # 5 minutes
             stats_screenshot_url = stats_msg.attachments[0].url
 
+            # 3. Delete all the prompt messages
+            try:
+                await bot_msg_1.delete()
+                await username_msg.delete()
+                await bot_msg_2.delete()
+                await stats_msg.delete()
+            except (discord.NotFound, discord.Forbidden):
+                pass # A message was already deleted or we lack perms, just continue
+
+            # 4. Send the final, clean embed
             success_embed = discord.Embed(
                 title="✅ Tryout Application Complete!",
                 description=f"Thank you, {interaction.user.mention}! A {staff_role.mention} will review your application soon.",
@@ -679,6 +687,7 @@ class TicketPanelView(discord.ui.View):
             success_embed.add_field(name="Roblox Username", value=roblox_username, inline=False)
             success_embed.set_image(url=stats_screenshot_url)
             
+            # This "starts" the ticket by adding the management buttons
             await channel.send(embed=success_embed, view=TicketCloseView(bot=self.bot))
 
         except asyncio.TimeoutError:
@@ -690,6 +699,7 @@ class TicketPanelView(discord.ui.View):
             await channel.send(embed=timeout_embed)
             await asyncio.sleep(10)
             await channel.delete(reason="Tryout ticket timeout")
+    # --- END UPDATED TRYOUT FUNCTION ---
 
     @discord.ui.button(label="Report a User", style=discord.ButtonStyle.danger, emoji="🚨", custom_id="panel:report")
     async def report_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -852,7 +862,6 @@ async def set_prefix(ctx: commands.Context, prefix: str):
     bot.update_guild_setting(ctx.guild.id, "prefix", prefix)
     await send_embed_response(ctx, "Setup Success", f"✅ My prefix for this server is now `{prefix}`", discord.Color.green())
 
-# --- NEW APPEAL SETUP COMMAND ---
 @bot.hybrid_command(name="set_appeal_channel", description="Sets the channel where blacklist appeals are sent.")
 @commands.has_permissions(administrator=True)
 @app_commands.describe(channel="The text channel for staff to review appeals.")
