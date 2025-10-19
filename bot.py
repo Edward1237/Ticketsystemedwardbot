@@ -723,7 +723,7 @@ class TicketPanelView(discord.ui.View):
             # 2. Ask for Stats Screenshot
             stats_embed = discord.Embed(
                 title="⚔️ Tryout Application - Step 2/2",
-                description=f"Great, `{roblox_username}`.\n\nNow, please send a **screenshot of your stats** from Roblox.",
+                description=f"Great, `{roblox_username}`.\n\nNow, please send a **screenshot of your stats** from RIVALS.",
                 color=discord.Color.green()
             ).set_footer(text="You have 5 minutes to reply. The message MUST contain an image.")
 
