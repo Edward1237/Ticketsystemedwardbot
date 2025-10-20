@@ -584,31 +584,59 @@ class TicketCloseView(discord.ui.View):
         except discord.Forbidden: await channel.send(embed=create_embed("Error", "Lacking permissions.", discord.Color.red()))
         except Exception as e: await channel.send(embed=create_embed("Error", f"Archival error: {e}", discord.Color.red()))
 
-# --- SETUP COMMANDS ---
-# (Setup commands remain the same)
+# --- SETUP COMMANDS (Hybrid - Works as '!' and '/') ---
+
 @bot.hybrid_command(name="set_panel_channel", description="Sets channel for the ticket panel.")
-@commands.has_permissions(administrator=True) @app_commands.describe(channel="Channel for the ticket panel.")
-async def set_panel_channel(ctx: commands.Context, channel: discord.TextChannel): bot.update_guild_setting(ctx.guild.id, "panel_channel", channel.id); await send_embed_response(ctx, "Setup", f"Panel channel: {channel.mention}", discord.Color.green())
+@commands.has_permissions(administrator=True)
+@app_commands.describe(channel="Channel for the ticket panel.")
+async def set_panel_channel(ctx: commands.Context, channel: discord.TextChannel):
+    bot.update_guild_setting(ctx.guild.id, "panel_channel", channel.id)
+    await send_embed_response(ctx, "Setup", f"Panel channel: {channel.mention}", discord.Color.green())
+
 @bot.hybrid_command(name="set_ticket_category", description="Sets category for new tickets.")
-@commands.has_permissions(administrator=True) @app_commands.describe(category="Category for new tickets.")
-async def set_ticket_category(ctx: commands.Context, category: discord.CategoryChannel): bot.update_guild_setting(ctx.guild.id, "ticket_category", category.id); await send_embed_response(ctx, "Setup", f"Ticket category: `{category.name}`", discord.Color.green())
+@commands.has_permissions(administrator=True)
+@app_commands.describe(category="Category for new tickets.")
+async def set_ticket_category(ctx: commands.Context, category: discord.CategoryChannel):
+    bot.update_guild_setting(ctx.guild.id, "ticket_category", category.id)
+    await send_embed_response(ctx, "Setup", f"Ticket category: `{category.name}`", discord.Color.green())
+
 @bot.hybrid_command(name="set_archive_category", description="Sets category for closed tickets.")
-@commands.has_permissions(administrator=True) @app_commands.describe(category="Category for archived tickets.")
-async def set_archive_category(ctx: commands.Context, category: discord.CategoryChannel): bot.update_guild_setting(ctx.guild.id, "archive_category", category.id); await send_embed_response(ctx, "Setup", f"Archive category: `{category.name}`", discord.Color.green())
+@commands.has_permissions(administrator=True)
+@app_commands.describe(category="Category for archived tickets.")
+async def set_archive_category(ctx: commands.Context, category: discord.CategoryChannel):
+    bot.update_guild_setting(ctx.guild.id, "archive_category", category.id)
+    await send_embed_response(ctx, "Setup", f"Archive category: `{category.name}`", discord.Color.green())
+
 @bot.hybrid_command(name="set_staff_role", description="Sets the main staff role.")
-@commands.has_permissions(administrator=True) @app_commands.describe(role="Your staff/support role.")
-async def set_staff_role(ctx: commands.Context, role: discord.Role): bot.update_guild_setting(ctx.guild.id, "staff_role", role.id); await send_embed_response(ctx, "Setup", f"Staff role: {role.mention}", discord.Color.green())
+@commands.has_permissions(administrator=True)
+@app_commands.describe(role="Your staff/support role.")
+async def set_staff_role(ctx: commands.Context, role: discord.Role):
+    bot.update_guild_setting(ctx.guild.id, "staff_role", role.id)
+    await send_embed_response(ctx, "Setup", f"Staff role: {role.mention}", discord.Color.green())
+
 @bot.hybrid_command(name="set_escalation_role", description="Sets role for !escalate.")
-@commands.has_permissions(administrator=True) @app_commands.describe(role="Senior staff/manager role.")
-async def set_escalation_role(ctx: commands.Context, role: discord.Role): bot.update_guild_setting(ctx.guild.id, "escalation_role", role.id); await send_embed_response(ctx, "Setup", f"Escalation role: {role.mention}", discord.Color.green())
+@commands.has_permissions(administrator=True)
+@app_commands.describe(role="Senior staff/manager role.")
+async def set_escalation_role(ctx: commands.Context, role: discord.Role):
+    bot.update_guild_setting(ctx.guild.id, "escalation_role", role.id)
+    await send_embed_response(ctx, "Setup", f"Escalation role: {role.mention}", discord.Color.green())
+
 @bot.hybrid_command(name="set_prefix", description="Sets bot prefix for this server.")
-@commands.has_permissions(administrator=True) @app_commands.describe(prefix="New prefix (max 5 chars).")
+@commands.has_permissions(administrator=True)
+@app_commands.describe(prefix="New prefix (max 5 chars).")
 async def set_prefix(ctx: commands.Context, prefix: str):
-    if len(prefix) > 5: await send_embed_response(ctx, "Error", "Prefix max 5 chars.", discord.Color.red()); return
-    bot.update_guild_setting(ctx.guild.id, "prefix", prefix); await send_embed_response(ctx, "Setup", f"Prefix: `{prefix}`", discord.Color.green())
+    if len(prefix) > 5:
+        await send_embed_response(ctx, "Error", "Prefix max 5 chars.", discord.Color.red())
+        return
+    bot.update_guild_setting(ctx.guild.id, "prefix", prefix)
+    await send_embed_response(ctx, "Setup", f"Prefix: `{prefix}`", discord.Color.green())
+
 @bot.hybrid_command(name="set_appeal_channel", description="Sets channel for blacklist appeals.")
-@commands.has_permissions(administrator=True) @app_commands.describe(channel="Channel for appeal reviews.")
-async def set_appeal_channel(ctx: commands.Context, channel: discord.TextChannel): bot.update_guild_setting(ctx.guild.id, "appeal_channel", channel.id); await send_embed_response(ctx, "Setup", f"Appeal channel: {channel.mention}", discord.Color.green())
+@commands.has_permissions(administrator=True)
+@app_commands.describe(channel="Channel for appeal reviews.")
+async def set_appeal_channel(ctx: commands.Context, channel: discord.TextChannel):
+    bot.update_guild_setting(ctx.guild.id, "appeal_channel", channel.id)
+    await send_embed_response(ctx, "Setup", f"Appeal channel: {channel.mention}", discord.Color.green())
 
 # --- PANEL CREATION COMMAND ---
 @bot.hybrid_command(name="create_panel", description="Sends the ticket panel.")
