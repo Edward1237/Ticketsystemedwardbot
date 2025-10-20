@@ -800,7 +800,14 @@ class TicketCloseView(discord.ui.View):
         try:
             base_name = channel.name.replace("closed-","")[:75]; closed_name = f"closed-{base_name}-{channel.id}"[:100]
             await channel.edit(name=closed_name, category=archive_category, overwrites=overwrites, reason=f"Closed by {user.name}. Reason: {reason}")
-            if transcript_message: try: await transcript_message.edit(view=None) except Exception: pass
+            # Attempt to remove view from the transcript message if it was sent successfully
+            if transcript_message:
+                 try:
+                     await transcript_message.edit(view=None)
+                 except (discord.NotFound, discord.Forbidden): # Handle specific expected errors
+                     pass # Ignore if message gone or no perms
+                 except Exception as edit_err:
+                     print(f"Failed to remove view from transcript msg: {edit_err}") # Log other errors
             await channel.send(embed=create_embed("Ticket Archived", f"Moved to {archive_category.name} and locked.", discord.Color.greyple()))
         except discord.Forbidden: print(f"ERROR: Lacking move/edit perms for {channel.id}."); await channel.send(embed=create_embed("Error", "Lacking archive permissions.", discord.Color.red()))
         except discord.NotFound: print(f"WARNING: Channel {channel.id} not found during archival.")
