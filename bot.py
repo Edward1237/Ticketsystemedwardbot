@@ -93,6 +93,20 @@ class TicketBot(commands.Bot):
         print('Bot is ready.')
         await self.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="for tickets"))
         print('------')
+    # Inside the TicketBot class
+
+    async def on_ready(self):
+        # ... (existing on_ready code) ...
+        await self.change_presence(activity=discord.Activity(type=discord.ActivityType.playing, name="managing tickets"))
+        print('------')
+
+    # ADD THIS FUNCTION:
+    async def on_disconnect(self):
+        print("-----------------------------------------")
+        print(f"[{datetime.now()}] Bot disconnected from Discord.")
+        print("-----------------------------------------")
+
+    # ... (rest of your class methods like get_guild_settings) ...
 
     def get_guild_settings(self, guild_id: int):
         """Gets settings for a specific guild, ensuring defaults and correct types."""
