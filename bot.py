@@ -106,6 +106,8 @@ bot = TicketBot()
 
 # --- HELPER FUNCTIONS ---
 
+# --- HELPER FUNCTIONS ---
+
 def create_embed(title: str = None, description: str = None, color: discord.Color = discord.Color.blurple()) -> discord.Embed:
     """Helper function to create a standard embed, handles None values."""
     # Use None as default, pass discord.Embed.Empty *only* if the value is actually None
@@ -119,6 +121,7 @@ def create_embed(title: str = None, description: str = None, color: discord.Colo
 
     return discord.Embed(title=final_title, description=final_description, color=color)
 
+# ... (The async def send_embed_response function follows) ...
 # --- CORRECTED FUNCTION DEFINITION ---
 async def send_embed_response(interaction: discord.Interaction, title: str = None, description: str = None, color: discord.Color = discord.Color.blurple(), ephemeral: bool = True):
     """Sends embed responses specifically for interactions, handles None values."""
