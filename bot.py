@@ -240,10 +240,7 @@ async def create_ticket_channel(interaction: discord.Interaction, ticket_type_na
         channel_name = f"{ticket_type_name}-{ticket_num}-{safe_user_name}"[:100]
         # More descriptive topic, keep user ID marker clear
         topic = f"Ticket #{ticket_num} ({ticket_type_name.capitalize()}) for {user.name}. UserID marker: [ticket-user-{user.id} type-{ticket_type_name}]"[:1024] # Max topic length
-
-        print(f"Attempting create channel '{channel_name}' in '{category.name}'")
         new_channel = await category.create_text_channel(name=channel_name, overwrites=overwrites, topic=topic, reason=f"Ticket created by {user.name}")
-        print(f"Channel created: {new_channel.mention}")
     except discord.Forbidden: print(f"ERROR: Forbidden creating channel in {category.id}"); await send_embed_response(interaction, "Permissions Error", "Cannot create channel/set perms.", discord.Color.red()); return None, None
     except Exception as e: print(f"ERROR creating channel: {e}"); traceback.print_exc(); await send_embed_response(interaction, "Error", "Error creating channel.", discord.Color.red()); return None, None
     return new_channel, staff_role
