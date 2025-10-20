@@ -785,6 +785,7 @@ class TicketCloseView(discord.ui.View):
         except Exception as e: print(f"ERROR sending transcript: {e}"); traceback.print_exc(); await channel.send(embed=create_embed("Error", "Transcript send error.", discord.Color.red()))
 
         # Clean up "Closing..." message
+        # Clean up "Closing..." message
         if closing_msg:
             try:
                 await closing_msg.delete()
