@@ -636,7 +636,13 @@ class TicketPanelView(discord.ui.View):
         current_bot = self.bot or interaction.client # Ensure bot instance
         if not current_bot:
              print("CRITICAL ERROR: Could not get bot instance in TicketPanelView interaction_check.")
-             await interaction.response.send_message("Internal bot error.", ephemeral=True)
+             # Try to respond if possible
+             try:
+                 if not interaction.response.is_done():
+                     await interaction.response.send_message("Internal bot error. Cannot process request.", ephemeral=True)
+                 else:
+                     await interaction.followup.send("Internal bot error. Cannot process request.", ephemeral=True)
+             except Exception: pass # Ignore if response fails
              return False
         self.bot = current_bot # Update self.bot if it was missing
 
@@ -656,10 +662,112 @@ class TicketPanelView(discord.ui.View):
         # --- SETUP CHECK ---
         required_settings = ['panel_channel', 'ticket_category', 'archive_category', 'staff_role']
         if not all(settings.get(key) for key in required_settings):
+            # Use send_embed_response which handles interaction state
             await send_embed_response(interaction, "System Offline", "The ticket system is not fully configured by an administrator.", discord.Color.red(), ephemeral=True)
             return False # Stop button callback
 
         return True # Allow button callback to proceed
+
+    # --- TICKET CREATION BUTTONS ---
+    @discord.ui.button(label="Standard Ticket", style=discord.ButtonStyle.primary, emoji="🎫", custom_id="persistent_panel:standard")
+    async def standard_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Handles the creation of a standard support ticket."""
+        current_bot = self.bot or interaction.client # Ensure bot instance
+        if not current_bot: await interaction.response.send_message("Internal error.", ephemeral=True); return
+        self.bot = current_bot
+
+        settings = self.bot.get_guild_settings(interaction.guild.id)
+        TICKET_TYPE = "ticket"; LIMIT = 3; category_id = settings.get('ticket_category')
+        if not category_id: await send_embed_response(interaction, "Setup Error", "Ticket category not configured.", discord.Color.red()); return
+
+        current_tickets = count_user_tickets(interaction.guild, interaction.user.id, category_id, TICKET_TYPE)
+        if current_tickets >= LIMIT: await send_embed_response(interaction, "Limit Reached", f"You may only have {LIMIT} open standard tickets.", discord.Color.orange()); return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        channel, staff_role = await create_ticket_channel(interaction, TICKET_TYPE, settings)
+        if channel and staff_role:
+            await interaction.followup.send(embed=create_embed("Ticket Created", f"Your ticket is ready: {channel.mention}", discord.Color.green()), ephemeral=True)
+            embed = discord.Embed(title="🎫 Standard Support Ticket", description=f"Welcome, {interaction.user.mention}!\nDescribe issue. {staff_role.mention} will assist.", color=discord.Color.blue())
+            # *** REMOVED view=... from here ***
+            await channel.send(embed=embed, content=f"{interaction.user.mention} {staff_role.mention}")
+
+    @discord.ui.button(label="Tryout Application", style=discord.ButtonStyle.success, emoji="⚔️", custom_id="persistent_panel:tryout")
+    async def tryout_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Handles the creation and application process for a tryout ticket."""
+        current_bot = self.bot or interaction.client
+        if not current_bot: await interaction.response.send_message("Internal error.", ephemeral=True); return
+        self.bot = current_bot
+
+        settings = self.bot.get_guild_settings(interaction.guild.id)
+        TICKET_TYPE = "tryout"; LIMIT = 1; category_id = settings.get('ticket_category')
+        if not category_id: await send_embed_response(interaction, "Setup Error", "Ticket category not configured.", discord.Color.red()); return
+
+        current_tickets = count_user_tickets(interaction.guild, interaction.user.id, category_id, TICKET_TYPE)
+        if current_tickets >= LIMIT: await send_embed_response(interaction, "Limit Reached", f"Max {LIMIT} open tryout application.", discord.Color.orange()); return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        channel, staff_role = await create_ticket_channel(interaction, TICKET_TYPE, settings)
+        if not channel or not staff_role: return
+
+        await interaction.followup.send(embed=create_embed("Ticket Created", f"Tryout channel ready: {channel.mention}", discord.Color.green()), ephemeral=True)
+        try: await channel.send(f"{interaction.user.mention} {staff_role.mention}", delete_after=1)
+        except Exception as e: print(f"Warning: Could not send ping in {channel.id}: {e}")
+
+        # --- Tryout Application Logic ---
+        try:
+            username_embed = create_embed("⚔️ Tryout Application - Step 1/2", "Reply with Roblox Username.", discord.Color.green()).set_footer(text="5 minute limit.")
+            bot_msg_1 = await channel.send(embed=username_embed)
+            def check_username(m): return m.channel == channel and m.author == interaction.user and not m.author.bot
+            username_msg = await self.bot.wait_for('message', check=check_username, timeout=300.0)
+            roblox_username = username_msg.content.strip()
+
+            stats_embed = create_embed("⚔️ Tryout Application - Step 2/2", f"`{roblox_username}`\nSend stats screenshot.", discord.Color.green()).set_footer(text="5 minute limit. Must be image.")
+            bot_msg_2 = await channel.send(embed=stats_embed)
+            def check_stats(m): return m.channel == channel and m.author == interaction.user and not m.author.bot and m.attachments and m.attachments[0].content_type and m.attachments[0].content_type.startswith('image')
+            stats_msg = await self.bot.wait_for('message', check=check_stats, timeout=300.0)
+            stats_screenshot_url = stats_msg.attachments[0].url if stats_msg.attachments else None
+
+            success_embed = create_embed("✅ Tryout Application Submitted", f"{interaction.user.mention}, {staff_role.mention} will review.", discord.Color.brand_green())
+            success_embed.add_field(name="Roblox Username", value=roblox_username, inline=False)
+            if stats_screenshot_url:
+                try: success_embed.set_image(url=stats_screenshot_url)
+                except Exception as e: print(f"Error setting image: {e}"); success_embed.add_field(name="Image Error", value="Could not embed.", inline=False)
+            else: success_embed.add_field(name="Stats Screenshot", value="Not provided.", inline=False)
+
+            # *** REMOVED view=... from here ***
+            await channel.send(embed=success_embed)
+
+        except asyncio.TimeoutError:
+            timeout_embed = create_embed("Ticket Closed Automatically", "Inactivity during application.", discord.Color.red())
+            try: await channel.send(embed=timeout_embed); await asyncio.sleep(10); await channel.delete(reason="Tryout timeout")
+            except (discord.NotFound, discord.Forbidden): pass
+            except Exception as e: print(f"Error during timeout cleanup: {e}")
+        except Exception as e:
+            print(f"ERROR during tryout process in {getattr(channel, 'id', 'N/A')}: {e}"); traceback.print_exc()
+            try: await channel.send(embed=create_embed("Application Error", "Unexpected error. Close ticket & try again, or create standard ticket.", discord.Color.red()))
+            except Exception: pass
+
+    @discord.ui.button(label="Report a User", style=discord.ButtonStyle.danger, emoji="🚨", custom_id="persistent_panel:report")
+    async def report_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Handles the creation of a user report ticket."""
+        current_bot = self.bot or interaction.client
+        if not current_bot: await interaction.response.send_message("Internal error.", ephemeral=True); return
+        self.bot = current_bot
+
+        settings = self.bot.get_guild_settings(interaction.guild.id)
+        TICKET_TYPE = "report"; LIMIT = 10; category_id = settings.get('ticket_category')
+        if not category_id: await send_embed_response(interaction, "Setup Error", "Ticket category not configured.", discord.Color.red()); return
+
+        current_tickets = count_user_tickets(interaction.guild, interaction.user.id, category_id, TICKET_TYPE)
+        if current_tickets >= LIMIT: await send_embed_response(interaction, "Limit Reached", f"Max {LIMIT} open report tickets.", discord.Color.orange()); return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        channel, staff_role = await create_ticket_channel(interaction, TICKET_TYPE, settings)
+        if channel and staff_role:
+            await interaction.followup.send(embed=create_embed("Ticket Created", f"Report channel ready: {channel.mention}", discord.Color.green()), ephemeral=True)
+            embed = discord.Embed(title="🚨 User Report", description=f"{interaction.user.mention}, provide info:\n1. Username\n2. Reason\n3. Details\n4. Proof\n{staff_role.mention} will review.", color=discord.Color.red())
+            # *** REMOVED view=... from here ***
+            await channel.send(embed=embed, content=f"{interaction.user.mention} {staff_role.mention}")
 
 # End of Part 2/4
 # bot.py (Part 3/4)
