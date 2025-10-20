@@ -115,7 +115,7 @@ class TicketBot(commands.Bot):
         print(f'discord.py version: {discord.__version__}')
         print('Bot is ready and listening for commands.')
         # Set a status
-        await self.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name="tickets"))
+        await self.change_presence(activity=discord.Activity(type=discord.ActivityType.Watching, name="tickets"))
         print('------')
 
     def get_guild_settings(self, guild_id):
