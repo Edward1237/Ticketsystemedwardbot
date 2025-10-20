@@ -366,12 +366,12 @@ class AppealReasonModal(discord.ui.Modal):
             await interaction.followup.send("An error occurred processing the reason.", ephemeral=True)
 
 # --- Persistent View for Appeal Review Buttons in Staff Channel ---
+
 class AppealReviewView(discord.ui.View):
     """Persistent view with Approve/Reject buttons for staff appeal channel."""
-    def __init__(self, bot_instance: TicketBot = None):
+    def __init__(self, bot: TicketBot): # Added ': TicketBot' type hint
         super().__init__(timeout=None)
-        # Store bot instance weakly or fetch from interaction if needed
-        self.bot_ref = bot_instance # Store bot instance
+        self.bot = bot # Store the bot instance
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         # Check permissions dynamically on button press
@@ -597,8 +597,9 @@ class AppealStartView(discord.ui.View):
 # --- TICKET PANEL VIEW ---
 class TicketPanelView(discord.ui.View):
     # This is the main persistent view with the ticket creation buttons
-    def __init__(self, bot: TicketBot = None):
-        super().__init__(timeout=None); self.bot = bot
+    def __init__(self, bot: TicketBot): # Added ': TicketBot' type hint
+        super().__init__(timeout=None)
+        self.bot = bot # Store the bot instance
 
     async def send_appeal_dm(self, user: discord.Member, guild: discord.Guild, reason: str):
         # Sends the initial DM to blacklisted users
@@ -819,10 +820,9 @@ class CloseReasonModal(discord.ui.Modal, title="Close Ticket Reason"):
 # --- PERSISTENT TICKET CLOSE VIEW ---
 class TicketCloseView(discord.ui.View):
     """View with 'Close' and 'Delete' buttons inside a ticket channel."""
-    def __init__(self, bot_instance: TicketBot = None):
+    def __init__(self, bot: TicketBot): # Added ': TicketBot' type hint
         super().__init__(timeout=None)
-        # Store bot instance, important for logic after restart
-        self.bot_ref = bot_instance
+        self.bot = bot # Store the bot instance
 
     @discord.ui.button(label="Close Ticket", style=discord.ButtonStyle.danger, emoji="🔒", custom_id="persistent_ticket:close")
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
