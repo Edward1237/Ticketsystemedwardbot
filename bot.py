@@ -1399,16 +1399,14 @@ bot.tree.add_command(mod_group)
 
 
 # --- RUN THE BOT ---
-if __name__ == "__main__": # Good practice to wrap run call
+if __name__ == "__main__": # Good practice
     try:
         print("Attempting to run bot...")
-        bot.run(TOKEN, log_handler=None) # Disable default discord.py logging if desired, or configure it
+        bot.run(TOKEN, log_handler=None)
     except discord.errors.LoginFailure:
-        print("CRITICAL ERROR: Login Failure - Improper token passed. Check .env file.")
-    except discord.errors.PrivilegedIntentsRequired:
-        print("CRITICAL ERROR: Privileged Intents Required - Enable Presence, Server Members, and Message Content intents in Developer Portal.")
+        print("CRITICAL ERROR: Login Failure...")
+    # ... other except blocks ...
     except Exception as e:
         print(f"CRITICAL ERROR during bot startup: {e}")
         traceback.print_exc()
 
-# End of Part 4/4
