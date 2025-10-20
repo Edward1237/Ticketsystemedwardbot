@@ -528,6 +528,8 @@ class AppealStartView(discord.ui.View):
 
 # bot.py (Part 3/4)
 
+# bot.py (Part 3/4 - Continued)
+
 # --- TICKET PANEL VIEW ---
 class TicketPanelView(discord.ui.View):
     """Persistent view with buttons to create different types of tickets."""
@@ -713,14 +715,16 @@ class TicketCloseView(discord.ui.View):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         """Ensure bot instance is present before running button callbacks."""
         if not self.bot:
-             print(f"TicketCloseView interaction_check: Bot instance missing, getting from client.")
+             print(f"TicketCloseView interaction_check: Bot instance missing, attempting to get from client.")
              self.bot = interaction.client # Try to get bot instance
              if not self.bot:
-                  print("CRITICAL ERROR: Could not get bot instance in TicketCloseView.");
-                  try: await interaction.response.send_message("Internal bot error.", ephemeral=True)
+                  print("CRITICAL ERROR: Could not get bot instance in TicketCloseView.")
+                  try: # Try to notify user
+                      if not interaction.response.is_done(): await interaction.response.send_message("Internal bot error. Cannot process action.", ephemeral=True)
+                      else: await interaction.followup.send("Internal bot error. Cannot process action.", ephemeral=True)
                   except: pass
-                  return False # Stop
-        return True # Proceed
+                  return False # Stop if bot instance is missing
+        return True # Proceed if bot instance exists
 
     @discord.ui.button(label="Close Ticket", style=discord.ButtonStyle.danger, emoji="🔒", custom_id="persistent_ticket:close")
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -754,7 +758,7 @@ class TicketCloseView(discord.ui.View):
         await asyncio.sleep(10)
         try: await interaction.channel.delete(reason=f"Deleted by {interaction.user.name} ({interaction.user.id})")
         except discord.NotFound: pass # Already gone
-        except discord.Forbidden: print(f"ERROR: Lacking delete permissions for {interaction.channel.id}")
+        except discord.Forbidden: print(f"ERROR: Lacking delete permissions for {interaction.channel.id}") # Log error
         except Exception as e: print(f"ERROR deleting ticket {interaction.channel.id}: {e}"); traceback.print_exc()
 
     async def close_ticket_logic(self, channel: discord.TextChannel, user: discord.Member, reason: str = "No reason provided"):
@@ -785,7 +789,6 @@ class TicketCloseView(discord.ui.View):
         except Exception as e: print(f"ERROR sending transcript: {e}"); traceback.print_exc(); await channel.send(embed=create_embed("Error", "Transcript send error.", discord.Color.red()))
 
         # Clean up "Closing..." message
-        # Clean up "Closing..." message
         if closing_msg:
             try:
                 await closing_msg.delete()
@@ -793,6 +796,7 @@ class TicketCloseView(discord.ui.View):
                 pass # Ignore if message is gone or we lack perms
             except Exception as e:
                 print(f"Error deleting 'closing' message: {e}") # Log unexpected errors
+
         await asyncio.sleep(3)
 
         overwrites = {guild.default_role: discord.PermissionOverwrite(view_channel=False), guild.me: discord.PermissionOverwrite(view_channel=True, read_messages=True, send_messages=True)}
@@ -801,6 +805,7 @@ class TicketCloseView(discord.ui.View):
         try:
             base_name = channel.name.replace("closed-","")[:75]; closed_name = f"closed-{base_name}-{channel.id}"[:100]
             await channel.edit(name=closed_name, category=archive_category, overwrites=overwrites, reason=f"Closed by {user.name}. Reason: {reason}")
+
             # Attempt to remove view from the transcript message if it was sent successfully
             if transcript_message:
                  try:
@@ -809,10 +814,13 @@ class TicketCloseView(discord.ui.View):
                      pass # Ignore if message gone or no perms
                  except Exception as edit_err:
                      print(f"Failed to remove view from transcript msg: {edit_err}") # Log other errors
+
             await channel.send(embed=create_embed("Ticket Archived", f"Moved to {archive_category.name} and locked.", discord.Color.greyple()))
         except discord.Forbidden: print(f"ERROR: Lacking move/edit perms for {channel.id}."); await channel.send(embed=create_embed("Error", "Lacking archive permissions.", discord.Color.red()))
         except discord.NotFound: print(f"WARNING: Channel {channel.id} not found during archival.")
         except Exception as e: print(f"ERROR archiving {channel.id}: {e}"); traceback.print_exc(); await channel.send(embed=create_embed("Error", "Archival error.", discord.Color.red()))
+
+# End of Part 3/4
 
 # End of Part 3/4
 # bot.py (Part 4/4)
