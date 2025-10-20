@@ -182,17 +182,22 @@ bot = TicketBot()
 
 # --- HELPER FUNCTIONS ---
 
-def create_embed(title: str = discord.Embed.Empty, description: str = discord.Embed.Empty, color: discord.Color = discord.Color.blurple()) -> discord.Embed:
-    """Helper to create a discord.Embed object consistently."""
-    # Ensure description is string or Embed.Empty, handle None input
-    final_description = str(description) if description is not None else discord.Embed.Empty
+# --- HELPER FUNCTIONS ---
 
-    # Basic length check for description to prevent Discord API errors
+def create_embed(title: str = None, description: str = None, color: discord.Color = discord.Color.blurple()) -> discord.Embed:
+    """Helper function to create a standard embed, handles None values."""
+    # Use None as default, pass discord.Embed.Empty *only* if the value is actually None
+    final_title = title if title is not None else discord.Embed.Empty
+    final_description = str(description) if description is not None else discord.Embed.Empty # Ensure description is string or Empty
+
+    # Add basic length check for description to avoid errors
     if len(final_description) > 4096: # Discord embed description limit
-        print(f"[WARNING] Truncating embed description exceeding 4096 characters. Title: '{title}'")
+        print(f"Warning: Truncating embed description starting with: {final_description[:50]}...")
         final_description = final_description[:4093] + "..."
 
-    return discord.Embed(title=title, description=final_description, color=color)
+    return discord.Embed(title=final_title, description=final_description, color=color)
+
+# ... (The async def send_embed_response function follows) ...
 
 async def send_embed_response(interaction: discord.Interaction, title: str = discord.Embed.Empty, description: str = discord.Embed.Empty, color: discord.Color = discord.Color.blurple(), ephemeral: bool = True):
     """Sends an embed response to an interaction, handling followup logic."""
