@@ -104,6 +104,8 @@ bot = TicketBot()
 # --- HELPER FUNCTIONS ---
 # --- HELPER FUNCTIONS ---
 
+# --- HELPER FUNCTIONS ---
+
 def create_embed(title: str = None, description: str = None, color: discord.Color = discord.Color.blurple()) -> discord.Embed:
     """Helper function to create a standard embed, handles None values."""
     # Use None as default, pass discord.Embed.Empty *only* if the value is actually None
@@ -117,21 +119,27 @@ def create_embed(title: str = None, description: str = None, color: discord.Colo
 
     return discord.Embed(title=final_title, description=final_description, color=color)
 
-# ... (rest of the code follows)
-
-async def send_embed_response(interaction: discord.Interaction, title: str = discord.Embed.Empty, description: str = discord.Embed.Empty, color: discord.Color = discord.Color.blurple(), ephemeral: bool = True):
-    # Sends embed responses for interactions, handles state
+# --- CORRECTED FUNCTION DEFINITION ---
+async def send_embed_response(interaction: discord.Interaction, title: str = None, description: str = None, color: discord.Color = discord.Color.blurple(), ephemeral: bool = True):
+    """Sends embed responses specifically for interactions, handles None values."""
+    # Create embed using the helper function which handles None correctly
     embed = create_embed(title, description, color)
     try:
         # Use defer() first if lengthy operation might follow, otherwise send directly
         # For simplicity, we just try to send/followup
         if interaction.response.is_done():
-            await interaction.followup.send(embed=embed, ephemeral=ephemeral)
+            await interaction.followup.send(embed=embed, ephemeral=ephemeral) # Error was likely here (line 130)
         else:
-            await interaction.response.send_message(embed=embed, ephemeral=ephemeral)
-    except discord.NotFound: print(f"WARNING: Interaction not found sending '{title}'.")
-    except discord.Forbidden: print(f"ERROR: Bot lacks permissions for embed response in {interaction.channel_id}.")
-    except Exception as e: print(f"ERROR sending embed response: {type(e).__name__} - {e}"); traceback.print_exc()
+            await interaction.response.send_message(embed=embed, ephemeral=ephemeral) # Or here (line 132)
+    except discord.NotFound:
+         print(f"WARNING: Interaction not found sending '{title}'.")
+    except discord.Forbidden:
+         print(f"ERROR: Bot lacks permissions for embed response in {interaction.channel_id}.")
+    except Exception as e:
+        print(f"ERROR sending embed response: {type(e).__name__} - {e}")
+        traceback.print_exc()
+
+# ... (rest of the code follows)
 
 
 # --- SLASH COMMAND GLOBAL ERROR HANDLER ---
