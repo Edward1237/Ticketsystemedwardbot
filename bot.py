@@ -199,29 +199,28 @@ def create_embed(title: str = None, description: str = None, color: discord.Colo
 
 # ... (The async def send_embed_response function follows) ...
 
-async def send_embed_response(interaction: discord.Interaction, title: str = discord.Embed.Empty, description: str = discord.Embed.Empty, color: discord.Color = discord.Color.blurple(), ephemeral: bool = True):
-    """Sends an embed response to an interaction, handling followup logic."""
+# --- HELPER FUNCTIONS CONTINUED --- # (Make sure create_embed is correct above this)
+
+async def send_embed_response(interaction: discord.Interaction, title: str = None, description: str = None, color: discord.Color = discord.Color.blurple(), ephemeral: bool = True):
+    """Sends embed responses specifically for interactions, handles None values."""
+    # Create embed using the helper function which handles None correctly
     embed = create_embed(title, description, color)
     try:
-        # Check if the interaction has already been responded to or deferred
+        # Use defer() first if lengthy operation might follow, otherwise send directly
+        # For simplicity, we just try to send/followup
         if interaction.response.is_done():
             await interaction.followup.send(embed=embed, ephemeral=ephemeral)
         else:
-            # If not responded/deferred, send the initial response
             await interaction.response.send_message(embed=embed, ephemeral=ephemeral)
     except discord.NotFound:
-         # Interaction might expire if processing takes too long or user dismisses
-         print(f"[WARNING] Interaction not found when sending response for '{title}'. User: {interaction.user.id}")
+         print(f"[WARNING] Interaction not found sending '{title}'.")
     except discord.Forbidden:
-         # Bot lacks permissions in the channel
-         print(f"[ERROR] Bot lacks permissions to send embed response in channel {interaction.channel_id} (Guild: {interaction.guild_id}).")
-         # Attempt to notify the user via DM if it's the first response (more likely to fail on followup)
-         if not interaction.response.is_done():
-              try: await interaction.user.send(f"I lack permissions to send messages in {interaction.channel.mention}.")
-              except Exception: pass # Ignore if DMs fail
+         print(f"[ERROR] Bot lacks permissions for embed response in {interaction.channel_id}.")
     except Exception as e:
-        print(f"[ERROR] Failed to send embed response for '{title}': {type(e).__name__} - {e}")
+        print(f"[ERROR] sending embed response: {type(e).__name__} - {e}")
         traceback.print_exc()
+
+# ... (rest of the code follows)
 
 # --- SLASH COMMAND GLOBAL ERROR HANDLER ---
 @bot.tree.error
