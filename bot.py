@@ -87,26 +87,28 @@ class TicketBot(commands.Bot):
             print(f"ERROR: Failed to sync slash commands: {e}")
             traceback.print_exc()
 
+    # Inside the TicketBot class
+
     async def on_ready(self):
         print(f'Logged in as {self.user} (ID: {self.user.id})')
         print(f'discord.py version: {discord.__version__}')
         print('Bot is ready.')
-        await self.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="for tickets"))
+        # Set status to "Playing managing tickets"
+        try:
+            await self.change_presence(activity=discord.Activity(type=discord.ActivityType.playing, name="managing tickets"))
+            print("Presence set successfully.")
+        except Exception as e:
+            print(f"Error setting presence: {e}")
         print('------')
-    # Inside the TicketBot class
 
-    async def on_ready(self):
-        # ... (existing on_ready code) ...
-        await self.change_presence(activity=discord.Activity(type=discord.ActivityType.playing, name="managing tickets"))
-        print('------')
-
-    # ADD THIS FUNCTION:
+    # ADD THIS FUNCTION (ensure it's indented like on_ready)
     async def on_disconnect(self):
         print("-----------------------------------------")
+        # Uses datetime imported at the top
         print(f"[{datetime.now()}] Bot disconnected from Discord.")
         print("-----------------------------------------")
 
-    # ... (rest of your class methods like get_guild_settings) ...
+    # ... (rest of your class methods like get_guild_settings follow here) ...
 
     def get_guild_settings(self, guild_id: int):
         """Gets settings for a specific guild, ensuring defaults and correct types."""
