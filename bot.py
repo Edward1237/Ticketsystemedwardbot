@@ -762,10 +762,13 @@ async def close(ctx: commands.Context):
 
 
 @bot.command(name="add")
-@commands.guild_only() @is_staff() @in_ticket_channel()
-async def add(ctx: commands.Context, user: discord.Member):
-    await ctx.channel.set_permissions(user, read_messages=True, send_messages=True, view_channel=True) # Add view_channel
-    await send_embed_response(ctx, "User Added", f"{user.mention} added by {ctx.author.mention}.", discord.Color.green(), ephemeral=False)
+@commands.guild_only() # <<< 4 SPACES
+@is_staff() # <<< 4 SPACES
+@in_ticket_channel() # <<< 4 SPACES
+async def add(ctx: commands.Context, user: discord.Member): # <<< 4 SPACES
+    """Adds a user to the current ticket channel."""
+    await ctx.channel.set_permissions(user, read_messages=True, send_messages=True, view_channel=True) # <<< 8 SPACES
+    await send_embed_response(ctx, "User Added", f"{user.mention} added by {ctx.author.mention}.", discord.Color.green(), ephemeral=False) # <<< 8 SPACES
 
 @bot.command(name="remove")
 @commands.guild_only() @is_staff() @in_ticket_channel()
