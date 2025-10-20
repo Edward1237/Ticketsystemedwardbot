@@ -784,7 +784,14 @@ class TicketCloseView(discord.ui.View):
         except discord.Forbidden: await channel.send(embed=create_embed("Error", "Lacking send/file permissions.", discord.Color.red()))
         except Exception as e: print(f"ERROR sending transcript: {e}"); traceback.print_exc(); await channel.send(embed=create_embed("Error", "Transcript send error.", discord.Color.red()))
 
-        if closing_msg: try: await closing_msg.delete() except: pass
+        # Clean up "Closing..." message
+        if closing_msg:
+            try:
+                await closing_msg.delete()
+            except (discord.NotFound, discord.Forbidden): # Be specific about expected errors
+                pass # Ignore if message is gone or we lack perms
+            except Exception as e:
+                print(f"Error deleting 'closing' message: {e}") # Log unexpected errors
         await asyncio.sleep(3)
 
         overwrites = {guild.default_role: discord.PermissionOverwrite(view_channel=False), guild.me: discord.PermissionOverwrite(view_channel=True, read_messages=True, send_messages=True)}
