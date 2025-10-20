@@ -1,51 +1,50 @@
 # bot.py (Part 1/4)
 
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 from discord import app_commands
 import json
 import os
 import io
 import asyncio
 from dotenv import load_dotenv
-import traceback # Added for detailed error logging
-# import time # Uncomment if using time for backup filenames
+import traceback
+from datetime import datetime
 
 # --- SETTINGS MANAGEMENT (for multi-server) ---
 SETTINGS_FILE = 'settings.json'
 
 def load_settings():
-    """Loads settings from settings.json"""
+    """Loads settings from settings.json, creating it if it doesn't exist."""
     if not os.path.exists(SETTINGS_FILE):
         print(f"Info: {SETTINGS_FILE} not found. Creating a new one.")
-        return {} # Return empty dict if file doesn't exist
+        with open(SETTINGS_FILE, 'w') as f:
+            json.dump({}, f)
+        return {}
     try:
         # Ensure file has content before trying to load
         if os.path.getsize(SETTINGS_FILE) == 0:
-            print(f"Warning: {SETTINGS_FILE} is empty. Starting with default settings.")
+            print(f"Warning: {SETTINGS_FILE} is empty. Starting with an empty dictionary.")
             return {}
-        with open(SETTINGS_FILE, 'r', encoding='utf-8') as f: # Specify encoding
+        with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
             return json.load(f)
     except json.JSONDecodeError:
         print(f"ERROR: {SETTINGS_FILE} is corrupted. Please fix or delete it. Starting with empty settings.")
-        # Optionally backup corrupted file here
-        # try: os.rename(SETTINGS_FILE, SETTINGS_FILE + f'.corrupted_{int(time.time())}')
-        # except OSError: pass
         return {}
     except Exception as e:
         print(f"ERROR loading settings: {e}")
-        traceback.print_exc() # Print full traceback for loading errors
+        traceback.print_exc()
         return {}
 
 
 def save_settings(settings):
     """Saves settings to settings.json"""
     try:
-        with open(SETTINGS_FILE, 'w', encoding='utf-8') as f: # Specify encoding
+        with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
             json.dump(settings, f, indent=4)
     except Exception as e:
         print(f"ERROR saving settings: {e}")
-        traceback.print_exc() # Print full traceback for saving errors
+        traceback.print_exc()
 
 # --- BOT SETUP ---
 
@@ -55,7 +54,7 @@ TOKEN = os.getenv('DISCORD_TOKEN')
 
 if not TOKEN:
     print("CRITICAL ERROR: DISCORD_TOKEN not found in .env file or environment variables.")
-    exit(1) # Exit with error code
+    exit(1)
 
 # Define intents
 intents = discord.Intents.default()
@@ -64,48 +63,26 @@ intents.guilds = True
 intents.members = True
 intents.message_content = True
 
-# --- DYNAMIC PREFIX FUNCTION ---
-def get_prefix(bot_instance, message):
-    """Gets the prefix for the specific guild."""
-    if not message.guild:
-        # Ignore messages in DMs for prefix commands entirely
-        return commands.when_mentioned(bot_instance, message) # Only allow mentions in DMs
-
-    # Ensure settings are loaded correctly
-    if not isinstance(bot_instance.settings, dict):
-         print("CRITICAL WARNING: Bot settings are not a dictionary. Using default prefix. Settings may be lost.")
-         bot_instance.settings = load_settings()
-         if not isinstance(bot_instance.settings, dict):
-              bot_instance.settings = {} # Reset to empty dict as last resort
-
-    settings_for_guild = bot_instance.settings.get(str(message.guild.id), {})
-    prefix = settings_for_guild.get("prefix", "!") # Default '!'
-    # Return both mention and the custom/default prefix
-    return commands.when_mentioned_or(prefix)(bot_instance, message)
-
-# Bot definition
+# Bot definition for Slash Commands Only
 class TicketBot(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix=get_prefix, intents=intents)
-        self.settings = load_settings() # Load settings on init
+        # We don't need a command_prefix for a slash-only bot
+        super().__init__(command_prefix=commands.when_mentioned, intents=intents)
+        self.settings = load_settings()
         self.persistent_views_added = False
-        self.remove_command('help') # Remove default help to use our custom one
 
     async def setup_hook(self):
         # This is run once internally before the bot is ready
         if not self.persistent_views_added:
             self.add_view(TicketPanelView(bot=self))
             self.add_view(TicketCloseView(bot=self))
-            self.add_view(AppealReviewView(bot=self)) # For appeal buttons
+            self.add_view(AppealReviewView(bot=self))
             self.persistent_views_added = True
-            print("Persistent views added.")
+            print("Persistent views have been registered.")
         try:
             print("Attempting to sync slash commands...")
-            # Sync commands and get the list of synced commands
             synced = await self.tree.sync()
             print(f"Slash commands synced: {len(synced)} commands.")
-            # Optionally print names of synced commands:
-            # for cmd in synced: print(f"- Synced: {cmd.name}")
         except Exception as e:
             print(f"ERROR: Failed to sync slash commands: {e}")
             traceback.print_exc()
@@ -113,77 +90,53 @@ class TicketBot(commands.Bot):
     async def on_ready(self):
         print(f'Logged in as {self.user} (ID: {self.user.id})')
         print(f'discord.py version: {discord.__version__}')
-        print('Bot is ready and listening for commands.')
-        # Set the status
-        await self.change_presence(activity=discord.Activity(type=discord.ActivityType.playing, name="Managing Tickets"))
+        print('Bot is ready.')
+        await self.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="for tickets"))
         print('------')
 
-    def get_guild_settings(self, guild_id):
+    def get_guild_settings(self, guild_id: int):
         """Gets settings for a specific guild, ensuring defaults and correct types."""
         guild_id_str = str(guild_id)
 
-        # Ensure self.settings is a dict, reload/reset if necessary
         if not isinstance(self.settings, dict):
-            print("CRITICAL WARNING: self.settings is not a dict in get_guild_settings. Reloading...")
+            print("CRITICAL WARNING: self.settings is not a dict. Reloading...")
             self.settings = load_settings()
-            if not isinstance(self.settings, dict): # Still not dict? Reset.
+            if not isinstance(self.settings, dict):
                 print("CRITICAL ERROR: Could not load settings as dict. Resetting settings.")
                 self.settings = {}
 
-        # Default structure for a guild's settings
         defaults = {
             "panel_channel": None, "ticket_category": None, "archive_category": None,
             "staff_role": None, "escalation_role": None, "appeal_channel": None,
-            "prefix": "!", "ticket_counter": 1, "blacklist": {}
+            "ticket_counter": 1, "blacklist": {}
         }
-
-        # Get current settings for the guild, or create if missing
         guild_settings = self.settings.get(guild_id_str)
         updated = False
 
         if not isinstance(guild_settings, dict):
-             print(f"WARNING: Settings for guild {guild_id_str} are not a dict ({type(guild_settings)}). Resetting guild settings.")
-             guild_settings = defaults.copy() # Use a copy of defaults
-             self.settings[guild_id_str] = guild_settings # Add/overwrite in main settings dict
-             updated = True # Mark for saving
+             print(f"WARNING: Settings for guild {guild_id_str} are invalid. Resetting.")
+             guild_settings = defaults.copy()
+             self.settings[guild_id_str] = guild_settings
+             updated = True
 
-        # Ensure all default keys exist in the guild's settings
         for key, default_value in defaults.items():
             if key not in guild_settings:
-                print(f"Adding missing key '{key}' with default value for guild {guild_id_str}")
+                print(f"Adding missing key '{key}' for guild {guild_id_str}")
                 guild_settings[key] = default_value
                 updated = True
-
-        # Save settings if any defaults were added or structure was reset
         if updated:
             save_settings(self.settings)
+        return guild_settings
 
-        return guild_settings # Return the potentially corrected guild_settings
-
-
-    def update_guild_setting(self, guild_id, key, value):
-        # Use get_guild_settings to ensure the structure exists and is correct before updating
+    def update_guild_setting(self, guild_id: int, key: str, value):
         settings = self.get_guild_settings(guild_id)
-        # Check type again just in case get_guild_settings failed somehow
         if isinstance(settings, dict):
             settings[key] = value
             save_settings(self.settings)
         else:
-            # This case should ideally not be reached anymore
-            print(f"CRITICAL ERROR: Could not update setting '{key}' for guild {guild_id}. Settings structure invalid.")
-
+            print(f"CRITICAL ERROR: Cannot update setting '{key}' for guild {guild_id}.")
 
 bot = TicketBot()
-
-# --- GLOBAL CHECK TO IGNORE DMS ---
-@bot.check
-async def globally_ignore_dms(ctx):
-    # This prevents ANY command from running in DMs, including default help
-    if ctx.guild is None and ctx.command is not None:
-        # Silently ignore DM commands
-        return False
-    # Allow commands invoked in guilds
-    return True
 
 # --- HELPER FUNCTIONS ---
 
@@ -191,130 +144,66 @@ def create_embed(title: str, description: str, color: discord.Color) -> discord.
     # Basic embed creation, ensures description is not None
     return discord.Embed(title=title, description=str(description) if description is not None else "", color=color)
 
-async def send_embed_response(ctx_or_interaction, title: str, description: str, color: discord.Color, ephemeral: bool = True):
-    # Sends embed response, handles Interaction vs Context and response state
+async def send_embed_response(interaction: discord.Interaction, title: str, description: str, color: discord.Color, ephemeral: bool = True):
+    # Sends embed responses specifically for interactions
     embed = create_embed(title, description, color)
-    target = None # For logging purposes
     try:
-        if isinstance(ctx_or_interaction, discord.Interaction):
-            target = ctx_or_interaction
-            if target.response.is_done():
-                # Already responded or deferred, use followup
-                await target.followup.send(embed=embed, ephemeral=ephemeral)
-            else:
-                # First response to the interaction
-                await target.response.send_message(embed=embed, ephemeral=ephemeral)
-
-        elif isinstance(ctx_or_interaction, commands.Context):
-            target = ctx_or_interaction
-            # Prefix commands can't send ephemeral directly in send()
-            # If ephemeral=True is desired, need to delete the response after delay
-            msg = await target.send(embed=embed)
-            if ephemeral:
-                 # Add a short delay then delete if ephemeral requested for prefix command
-                 await asyncio.sleep(10) # Adjust delay as needed
-                 try:
-                     await msg.delete()
-                 except (discord.NotFound, discord.Forbidden):
-                     pass # Ignore if message already deleted or lacking perms
-
+        if interaction.response.is_done():
+            await interaction.followup.send(embed=embed, ephemeral=ephemeral)
+        else:
+            await interaction.response.send_message(embed=embed, ephemeral=ephemeral)
     except discord.NotFound:
-         # This often happens if the original interaction/message was deleted before responding
-         print(f"WARNING: Interaction/Context not found when sending embed (target: {target}).")
+         print(f"WARNING: Interaction not found when sending embed '{title}'. It may have expired.")
     except discord.Forbidden:
-         # Bot lacks permissions to send messages/embeds in the channel or DM
-         print(f"ERROR: Bot lacks permissions to send embed response (target: {target}).")
-         # Try to notify the user in DMs if it's a context
-         if isinstance(target, commands.Context):
-             try:
-                 await target.author.send(f"I don't have permission to send messages in {target.channel.mention}.")
-             except Exception:
-                 pass # Ignore if DMs fail too
+         print(f"ERROR: Bot lacks permissions to send embed response in channel {interaction.channel_id}.")
     except Exception as e:
-        print(f"ERROR sending embed response: {type(e).__name__} - {e} (target: {target})")
+        print(f"ERROR sending embed response: {type(e).__name__} - {e}")
         traceback.print_exc()
 
-# --- ERROR HANDLING ---
-@bot.event
-async def on_command_error(ctx, error):
-    # More robust error handling
-    if isinstance(error, commands.MissingPermissions):
-        await send_embed_response(ctx, "Permission Denied", "You don't have permission.", discord.Color.red(), ephemeral=True) # Try ephemeral
-    elif isinstance(error, commands.CheckFailure):
-        # Specific checks (like is_staff) often send their own message now.
-        # Can add a generic fallback if needed, but 'pass' is often fine.
+
+# --- SLASH COMMAND GLOBAL ERROR HANDLER ---
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    """Global error handler for all slash commands."""
+    if isinstance(error, app_commands.errors.MissingPermissions):
+        await send_embed_response(interaction, "Permission Denied", "You lack the required permissions to use this command.", discord.Color.red())
+    elif isinstance(error, app_commands.errors.CheckFailure):
+        # This catches errors from checks like is_staff().
+        # The check function itself sends the response, so we can often just pass.
+        print(f"Check failure for command '{interaction.command.name}' by {interaction.user.name} (already handled).")
         pass
-    elif isinstance(error, commands.ChannelNotFound):
-        param = getattr(error, 'argument', 'channel') # Try to get specific arg name
-        await send_embed_response(ctx, "Error", f"Channel '{param}' not found.", discord.Color.red(), ephemeral=True)
-    elif isinstance(error, commands.RoleNotFound):
-        param = getattr(error, 'argument', 'role')
-        await send_embed_response(ctx, "Error", f"Role '{param}' not found.", discord.Color.red(), ephemeral=True)
-    elif isinstance(error, commands.MissingRequiredArgument):
-        await send_embed_response(ctx, "Error", f"Missing argument: `{error.param.name}`.", discord.Color.orange(), ephemeral=True)
-    elif isinstance(error, commands.CommandNotFound):
-        pass # Ignore unknown commands silently
-    elif isinstance(error, commands.BadArgument):
-         # Provides more context about the conversion failure
-         await send_embed_response(ctx, "Error", f"Invalid argument provided: {error}", discord.Color.orange(), ephemeral=True)
-    elif isinstance(error, commands.CommandInvokeError):
-        # Errors raised *within* the command's code
+    elif isinstance(error, app_commands.errors.CommandInvokeError):
+        # Error raised from within the command's code
         original = error.original
-        print(f"ERROR during command execution ({ctx.command}):")
-        traceback.print_exception(type(original), original, original.__traceback__) # Print full traceback
-        await send_embed_response(ctx, "Runtime Error", "An error occurred executing command.", discord.Color.dark_red(), ephemeral=True)
-    elif isinstance(error, app_commands.errors.CommandInvokeError) and isinstance(ctx, discord.Interaction):
-         # Handle errors specifically from slash command invocations
-         original = error.original
-         print(f"ERROR during slash command execution ({ctx.command.qualified_name}):")
-         traceback.print_exception(type(original), original, original.__traceback__)
-         # Use the interaction context to send the error message
-         await send_embed_response(ctx, "Runtime Error", "An error occurred executing command.", discord.Color.dark_red(), ephemeral=True)
-
+        print(f"ERROR during slash command execution ({interaction.command.name}):")
+        traceback.print_exception(type(original), original, original.__traceback__)
+        await send_embed_response(interaction, "Command Error", "An unexpected error occurred while running this command.", discord.Color.dark_red())
     else:
-        # Log unexpected/unhandled errors
-        print(f"UNHANDLED ERROR ({type(error)}) in command '{ctx.command}': {error}")
+        # Log any other unexpected slash command errors
+        print(f"UNHANDLED SLASH COMMAND ERROR ({type(error)}) in command '{interaction.command.name}': {error}")
         traceback.print_exception(type(error), error, error.__traceback__)
-        try:
-            # Send generic error, ephemeral if possible
-            is_interaction = isinstance(ctx, discord.Interaction)
-            await send_embed_response(ctx, "Error", "An unexpected error occurred.", discord.Color.dark_red(), ephemeral=is_interaction)
-        except Exception as e: print(f"Failed to send generic error message: {e}")
+        # Send a generic error message if possible
+        if not interaction.response.is_done():
+            await send_embed_response(interaction, "Error", "An unknown error occurred.", discord.Color.dark_red())
 
-# --- HELPER FUNCTIONS ---
-async def check_setup(ctx_or_interaction):
+# --- HELPER FUNCTIONS CONTINUED ---
+async def check_setup(interaction: discord.Interaction):
     """Checks if the bot is fully set up for the guild."""
-    if not ctx_or_interaction.guild:
-        print("check_setup called without guild context.")
-        return False
-    try:
-        settings = bot.get_guild_settings(ctx_or_interaction.guild.id)
-    except Exception as e:
-         print(f"Error getting guild settings during setup check: {e}")
-         await send_embed_response(ctx_or_interaction, "Critical Error", "Could not load server settings.", discord.Color.red())
-         return False
-
+    settings = bot.get_guild_settings(interaction.guild.id)
     required_settings = ['panel_channel', 'ticket_category', 'archive_category', 'staff_role']
-    missing = [s for s in required_settings if not settings.get(s)]
+    missing = [s.replace("_", " ").title() for s in required_settings if not settings.get(s)]
 
     if missing:
         embed = discord.Embed(
-            title="Bot Not Fully Setup!",
-            description="Admin needs to run setup commands:", color=discord.Color.red()
+            title="Bot Not Fully Configured",
+            description="An administrator must run all setup commands first:", color=discord.Color.red()
         )
-        embed.add_field(name="`/set_panel_channel`", value="Channel for panel.", inline=False)
-        embed.add_field(name="`/set_ticket_category`", value="Category for new tickets.", inline=False)
-        embed.add_field(name="`/set_archive_category`", value="Category for closed tickets.", inline=False)
-        embed.add_field(name="`/set_staff_role`", value="Staff role.", inline=False)
-        embed.set_footer(text=f"Missing: {', '.join(missing)}")
-        try:
-            # Use send_embed_response to handle context/interaction state
-             await send_embed_response(ctx_or_interaction, embed.title, embed.description, embed.color, ephemeral=True)
-        except Exception as e: print(f"Error sending setup warning: {e}")
+        embed.add_field(name="Required Settings", value="\n".join([f"- `/setup {s.lower().replace(' ', '_')}`" for s in missing]), inline=False)
+        await send_embed_response(interaction, embed.title, embed.description, embed.color, ephemeral=True)
         return False
     return True
 
-# --- Helper to count user's open tickets ---
+# Helper to count user's open tickets
 def count_user_tickets(guild: discord.Guild, user_id: int, category_id: int, ticket_type: str = None) -> int:
     category = guild.get_channel(category_id)
     if not category or not isinstance(category, discord.CategoryChannel):
@@ -329,25 +218,24 @@ def count_user_tickets(guild: discord.Guild, user_id: int, category_id: int, tic
             else: count += 1
     return count
 
-# --- create_ticket_channel adds type to topic ---
+# create_ticket_channel adds type to topic
 async def create_ticket_channel(interaction: discord.Interaction, ticket_type_name: str, settings: dict):
     guild = interaction.guild; user = interaction.user
     staff_role_id = settings.get('staff_role'); category_id = settings.get('ticket_category')
 
-    if not staff_role_id: await send_embed_response(interaction, "Setup Error", "Staff Role not set.", discord.Color.red()); return None, None
-    staff_role = guild.get_role(staff_role_id)
-    if not staff_role: await send_embed_response(interaction, "Setup Error", "Staff Role not found.", discord.Color.red()); return None, None
-    if not category_id: await send_embed_response(interaction, "Setup Error", "Ticket Category not set.", discord.Color.red()); return None, None
-    category = guild.get_channel(category_id)
-    if not category or not isinstance(category, discord.CategoryChannel): await send_embed_response(interaction, "Setup Error", "Ticket Category invalid.", discord.Color.red()); return None, None
+    if not staff_role_id or not (staff_role := guild.get_role(staff_role_id)):
+        await send_embed_response(interaction, "Configuration Error", "The Staff Role is not set up correctly.", discord.Color.red()); return None, None
+    if not category_id or not (category := guild.get_channel(category_id)) or not isinstance(category, discord.CategoryChannel):
+        await send_embed_response(interaction, "Configuration Error", "The Ticket Category is not set up correctly.", discord.Color.red()); return None, None
 
-    # General hard limit
+    # Hard limit to prevent abuse
     if count_user_tickets(guild, user.id, category.id) > 15:
-        await send_embed_response(interaction, "Limit Reached", "Too many open tickets.", discord.Color.orange()); return None, None
+        await send_embed_response(interaction, "Limit Reached", "You have too many open tickets across all types.", discord.Color.orange()); return None, None
 
     ticket_num = settings.get('ticket_counter', 1)
     bot.update_guild_setting(guild.id, "ticket_counter", ticket_num + 1)
 
+    # Permissions for the new channel
     overwrites = {
         guild.default_role: discord.PermissionOverwrite(read_messages=False, view_channel=False),
         user: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True, view_channel=True),
@@ -356,35 +244,37 @@ async def create_ticket_channel(interaction: discord.Interaction, ticket_type_na
     }
 
     try:
+        # Sanitize username for channel name
         safe_user_name = "".join(c for c in user.name if c.isalnum() or c in ('-', '_')).lower() or "user"
         channel_name = f"{ticket_type_name}-{ticket_num}-{safe_user_name}"[:100]
-        topic = f"ticket-user-{user.id} type-{ticket_type_name}"
-        print(f"Attempting to create channel '{channel_name}' in category '{category.name}' ({category.id})") # Debug print
+        topic = f"Ticket for {user.name} ({user.id}). Type: {ticket_type_name}. Do not modify 'ticket-user-ID'. ticket-user-{user.id} type-{ticket_type_name}"
+        
+        print(f"Attempting to create channel '{channel_name}' in category '{category.name}' ({category.id})")
         new_channel = await category.create_text_channel(name=channel_name, overwrites=overwrites, topic=topic)
-        print(f"Channel created successfully: {new_channel.mention} ({new_channel.id})") # Debug print
+        print(f"Channel created successfully: {new_channel.mention} ({new_channel.id})")
     except discord.Forbidden:
         print(f"ERROR: Forbidden - Bot lacks permissions to create channel in category {category.id}")
-        await send_embed_response(interaction, "Permissions Error", "Cannot create channel/set perms.", discord.Color.red()); return None, None
+        await send_embed_response(interaction, "Permissions Error", "I lack the required permissions to create channels or set permissions in that category.", discord.Color.red()); return None, None
     except Exception as e:
-        print(f"ERROR creating channel: {e}")
-        traceback.print_exc()
-        await send_embed_response(interaction, "Error", f"Error creating channel: {e}", discord.Color.red()); return None, None
-    return new_channel, staff_role
+        print(f"ERROR creating channel: {e}"); traceback.print_exc()
+        await send_embed_response(interaction, "Error", f"An unknown error occurred while creating the channel.", discord.Color.red()); return None, None
 
+    return new_channel, staff_role
 # End of Part 1/4
 # bot.py (Part 2/4)
 
 async def generate_transcript(channel: discord.TextChannel):
-    # Generates a transcript, escaping markdown and mentions, handles large files
+    """Generates a text file transcript of the channel's messages."""
     messages = []
     async for msg in channel.history(limit=None, oldest_first=True): # Get all messages
+        # Use UTC for timestamps
         timestamp = msg.created_at.strftime('%Y-%m-%d %H:%M:%S UTC')
-        # Escape markdown and mentions to prevent formatting issues/pings in transcript file
+        # Escape markdown and mentions to prevent formatting issues/pings
         clean_content = discord.utils.remove_markdown(discord.utils.escape_mentions(msg.content))
         author_display = f"{msg.author.display_name} ({msg.author.id})"
         if not msg.author.bot:
             messages.append(f"[{timestamp}] {author_display}: {clean_content}")
-        # Include attachments in the log
+        # Include attachments
         if msg.attachments:
             for att in msg.attachments:
                 messages.append(f"[{timestamp}] [Attachment from {author_display}: {att.url}]")
@@ -395,138 +285,150 @@ async def generate_transcript(channel: discord.TextChannel):
 
     # Encode to check size and handle potential truncation
     encoded_content = transcript_content.encode('utf-8')
-    # Use a slightly smaller max size to be safe (Discord limit is 8MB, use ~7.5MB)
+    # Use a slightly smaller max size (Discord limit is 8MB, use ~7.5MB)
     max_size = 7 * 1024 * 1024 + 512 * 1024 # Approx 7.5MB
 
     if len(encoded_content) > max_size:
         print(f"Transcript for {channel.name} too large ({len(encoded_content)} bytes), truncating.")
-        # Truncate content, ensuring space for the truncation message
-        truncated_content = encoded_content[:max_size - 200]
+        truncated_content = encoded_content[:max_size - 200] # Leave space for message
         try:
-            # Decode back, ignoring errors if it cuts mid-character
+            # Decode back, ignoring errors
             transcript_content = truncated_content.decode('utf-8', errors='ignore')
             transcript_content += "\n\n--- TRANSCRIPT TRUNCATED DUE TO SIZE LIMIT ---"
-            encoded_content = transcript_content.encode('utf-8') # Re-encode truncated content
+            encoded_content = transcript_content.encode('utf-8') # Re-encode
         except Exception as e:
              print(f"Error during transcript truncation: {e}")
-             # Fallback if decoding/re-encoding fails badly
              return io.BytesIO(b"Transcript too large and could not be properly truncated.")
 
     return io.BytesIO(encoded_content) # Return as bytes buffer
 
 # --- APPEAL/MODAL CLASSES ---
+
 # --- Modal for Appeal Approve/Reject Reason ---
 class AppealReasonModal(discord.ui.Modal):
-    def __init__(self, bot: TicketBot, action: str, original_message: discord.Message, guild: discord.Guild, appealing_user_id: int):
+    """Modal popup for staff to enter reason for approving/rejecting an appeal."""
+    def __init__(self, bot_instance: TicketBot, action: str, original_message: discord.Message, guild: discord.Guild, appealing_user_id: int):
         super().__init__(title=f"Appeal {action} Reason")
-        self.bot = bot; self.action = action; self.original_message = original_message
+        self.bot = bot_instance; self.action = action; self.original_message = original_message
         self.guild = guild; self.appealing_user_id = appealing_user_id
         self.reason_input = discord.ui.TextInput(
             label="Reason", style=discord.TextStyle.paragraph,
-            placeholder=f"Reason for {action.lower()}ing...", required=True, min_length=3
+            placeholder=f"Please provide the reason for {action.lower()}ing this appeal...",
+            required=True, min_length=5, max_length=500
         )
         self.add_item(self.reason_input)
 
     async def on_submit(self, interaction: discord.Interaction):
+        """Processes the reason, updates appeal, notifies user."""
         await interaction.response.defer(ephemeral=True); staff_member = interaction.user; reason = self.reason_input.value
         try: appealing_user = await self.bot.fetch_user(self.appealing_user_id)
-        except discord.NotFound: await interaction.followup.send(embed=create_embed("Error", "Could not find user.", discord.Color.red())); return
+        except discord.NotFound: await interaction.followup.send(embed=create_embed("Error", "Could not find the appealing user to notify.", discord.Color.red())); return
 
-        if not self.original_message.embeds: await interaction.followup.send(embed=create_embed("Error", "Original embed missing.", discord.Color.red())); return
+        if not self.original_message.embeds: await interaction.followup.send(embed=create_embed("Error", "Could not find the original appeal message embed.", discord.Color.red())); return
         original_embed = self.original_message.embeds[0]; new_embed = original_embed.copy()
 
         if self.action == "Approve":
-            title = "✅ Appeal Approved"; color = discord.Color.green()
-            try: dm_embed = create_embed(title, f"Appeal for **{self.guild.name}** approved.\nReason:\n```{reason}```", color); await appealing_user.send(embed=dm_embed)
-            except discord.Forbidden: print(f"Could not DM user {appealing_user.id} (appeal approved)")
+            title = "✅ Blacklist Appeal Approved"; color = discord.Color.green()
+            dm_desc = f"Your blacklist appeal for **{self.guild.name}** has been approved by staff.\n\n**Reason Provided:**\n```{reason}```\nYou should now be able to create tickets again."
+            # Unblacklist the user
             settings = self.bot.get_guild_settings(self.guild.id); user_id_str = str(self.appealing_user_id)
-            # Use .get() for safer access to blacklist dict
             if user_id_str in settings.get("blacklist", {}):
                 del settings["blacklist"][user_id_str]; save_settings(self.bot.settings)
-                print(f"User {user_id_str} unblacklisted via appeal.")
+                print(f"User {user_id_str} unblacklisted via appeal approval by {staff_member.name}.")
         else: # Reject
-            title = "❌ Appeal Rejected"; color = discord.Color.red()
-            try: dm_embed = create_embed(title, f"Appeal for **{self.guild.name}** rejected.\nReason:\n```{reason}```", color); await appealing_user.send(embed=dm_embed)
-            except discord.Forbidden: print(f"Could not DM user {appealing_user.id} (appeal rejected)")
+            title = "❌ Blacklist Appeal Rejected"; color = discord.Color.red()
+            dm_desc = f"Your blacklist appeal for **{self.guild.name}** has been rejected by staff.\n\n**Reason Provided:**\n```{reason}```"
 
-        new_embed.title = f"[{self.action.upper()}D] Blacklist Appeal"; new_embed.color = color
-        new_embed.add_field(name=f"{title} by {staff_member.display_name}", value=f"```{reason}```", inline=False)
+        # Try to DM the user
         try:
-            await self.original_message.edit(embed=new_embed, view=None) # Remove buttons after action
+            dm_embed = create_embed(title, dm_desc, color)
+            await appealing_user.send(embed=dm_embed)
+        except discord.Forbidden: print(f"Could not DM user {appealing_user.id} (appeal {self.action.lower()}d)")
+        except Exception as e: print(f"Error sending appeal result DM to {appealing_user.id}: {e}")
+
+        # Edit the staff message
+        new_embed.title = f"[{self.action.upper()}D] Blacklist Appeal"
+        new_embed.color = color
+        new_embed.add_field(name=f"{self.action.capitalize()}d by {staff_member.display_name}", value=f"```{reason}```", inline=False)
+        try:
+            await self.original_message.edit(embed=new_embed, view=None) # Remove buttons
         except discord.NotFound: print("Original appeal message not found during edit.")
         except discord.Forbidden: print("Lacking permissions to edit original appeal message.")
-        await interaction.followup.send(embed=create_embed("Success", f"Appeal {self.action.lower()}d. User notified.", color)) # More informative success
+
+        await interaction.followup.send(embed=create_embed("Action Complete", f"The appeal has been **{self.action.lower()}d**. The user has been notified (if DMs are enabled).", color), ephemeral=True)
 
     async def on_error(self, interaction: discord.Interaction, error: Exception):
         print(f"ERROR in AppealReasonModal: {error}"); traceback.print_exc()
-        await interaction.followup.send("Error processing appeal reason.", ephemeral=True)
+        # Check if already responded before sending followup
+        if not interaction.response.is_done():
+            await interaction.response.send_message("An error occurred processing the reason.", ephemeral=True)
+        else:
+            await interaction.followup.send("An error occurred processing the reason.", ephemeral=True)
 
 # --- Persistent View for Appeal Review Buttons in Staff Channel ---
 class AppealReviewView(discord.ui.View):
-    def __init__(self, bot: TicketBot = None):
-        super().__init__(timeout=None); self.bot = bot
+    """Persistent view with Approve/Reject buttons for staff appeal channel."""
+    def __init__(self, bot_instance: TicketBot = None):
+        super().__init__(timeout=None)
+        # Store bot instance weakly or fetch from interaction if needed
+        self.bot_ref = bot_instance # Store bot instance
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        # Check if bot is attached, crucial after restarts
-        if not self.bot:
-            print("AppealReviewView: Bot instance not found, attaching from interaction.")
-            self.bot = interaction.client # Get bot instance from interaction
-            if not self.bot:
-                 print("CRITICAL ERROR: Could not get bot instance in AppealReviewView interaction_check.")
-                 await interaction.response.send_message("Internal bot error.", ephemeral=True)
-                 return False # Cannot proceed without bot instance
+        # Check permissions dynamically on button press
+        # Use a local variable for the bot instance for this check
+        current_bot = self.bot_ref or interaction.client
+        if not current_bot:
+             print("CRITICAL ERROR: Could not get bot instance in AppealReviewView interaction_check.")
+             await interaction.response.send_message("Internal bot error.", ephemeral=True)
+             return False
 
         # Permission check: Only staff can use these buttons
-        settings = self.bot.get_guild_settings(interaction.guild.id); staff_role_id = settings.get('staff_role')
+        settings = current_bot.get_guild_settings(interaction.guild.id); staff_role_id = settings.get('staff_role')
         if not staff_role_id: await send_embed_response(interaction, "Error", "Staff role not configured.", discord.Color.red()); return False
         staff_role = interaction.guild.get_role(staff_role_id)
-        # Check if interaction user is a Member before checking roles
         if not isinstance(interaction.user, discord.Member):
-             print(f"Warning: interaction.user is not a Member in AppealReviewView check ({type(interaction.user)})")
-             # Allow if they have admin perms even if not member? Risky. Better to deny.
              await send_embed_response(interaction, "Error", "Could not verify permissions.", discord.Color.red()); return False
-
         is_admin = interaction.user.guild_permissions.administrator
         if (staff_role and staff_role in interaction.user.roles) or is_admin: return True
-        else: await send_embed_response(interaction, "Permission Denied", "Staff only.", discord.Color.red()); return False
+        else: await send_embed_response(interaction, "Permission Denied", "Only staff members can review appeals.", discord.Color.red()); return False
 
-    @discord.ui.button(label="Approve", style=discord.ButtonStyle.success, emoji="✅", custom_id="appeal:approve")
+    @discord.ui.button(label="Approve", style=discord.ButtonStyle.success, emoji="✅", custom_id="persistent_appeal:approve")
     async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not interaction.message.embeds: await send_embed_response(interaction, "Error", "Embed missing.", discord.Color.red()); return
+        current_bot = self.bot_ref or interaction.client # Get bot instance
+        if not interaction.message.embeds: await send_embed_response(interaction, "Error", "Cannot find appeal information.", discord.Color.red()); return
         embed = interaction.message.embeds[0]
-        if not embed.footer or "User ID:" not in embed.footer.text: await send_embed_response(interaction, "Error", "User ID missing.", discord.Color.red()); return
+        if not embed.footer or "User ID:" not in embed.footer.text: await send_embed_response(interaction, "Error", "Cannot identify user from appeal.", discord.Color.red()); return
         try: user_id = int(embed.footer.text.split(": ")[1])
         except (IndexError, ValueError): await send_embed_response(interaction, "Error", "Cannot parse User ID.", discord.Color.red()); return
-        # Ensure bot instance is available for the Modal
-        if not self.bot: self.bot = interaction.client
-        modal = AppealReasonModal(bot=self.bot, action="Approve", original_message=interaction.message, guild=interaction.guild, appealing_user_id=user_id)
+        modal = AppealReasonModal(bot_instance=current_bot, action="Approve", original_message=interaction.message, guild=interaction.guild, appealing_user_id=user_id)
         await interaction.response.send_modal(modal)
 
-    @discord.ui.button(label="Reject", style=discord.ButtonStyle.danger, emoji="❌", custom_id="appeal:reject")
+    @discord.ui.button(label="Reject", style=discord.ButtonStyle.danger, emoji="❌", custom_id="persistent_appeal:reject")
     async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not interaction.message.embeds: await send_embed_response(interaction, "Error", "Embed missing.", discord.Color.red()); return
+        current_bot = self.bot_ref or interaction.client # Get bot instance
+        if not interaction.message.embeds: await send_embed_response(interaction, "Error", "Cannot find appeal information.", discord.Color.red()); return
         embed = interaction.message.embeds[0]
-        if not embed.footer or "User ID:" not in embed.footer.text: await send_embed_response(interaction, "Error", "User ID missing.", discord.Color.red()); return
+        if not embed.footer or "User ID:" not in embed.footer.text: await send_embed_response(interaction, "Error", "Cannot identify user from appeal.", discord.Color.red()); return
         try: user_id = int(embed.footer.text.split(": ")[1])
         except (IndexError, ValueError): await send_embed_response(interaction, "Error", "Cannot parse User ID.", discord.Color.red()); return
-        # Ensure bot instance is available for the Modal
-        if not self.bot: self.bot = interaction.client
-        modal = AppealReasonModal(bot=self.bot, action="Reject", original_message=interaction.message, guild=interaction.guild, appealing_user_id=user_id)
+        modal = AppealReasonModal(bot_instance=current_bot, action="Reject", original_message=interaction.message, guild=interaction.guild, appealing_user_id=user_id)
         await interaction.response.send_modal(modal)
 
-# --- View for Final Appeal Confirmation (DM) ---
+# --- View for Final Appeal Confirmation (DM - Non-persistent) ---
 class ConfirmAppealView(discord.ui.View):
-    def __init__(self, bot: TicketBot, answers: dict, guild: discord.Guild, appeal_channel: discord.TextChannel, messages_to_delete: list):
-        super().__init__(timeout=600); self.bot = bot; self.answers = answers; self.guild = guild
-        self.appeal_channel = appeal_channel; self.messages_to_delete = messages_to_delete; self.message = None # To store the view's message object
+    """View shown in DM to confirm appeal submission."""
+    def __init__(self, bot_instance: TicketBot, answers: dict, guild: discord.Guild, appeal_channel: discord.TextChannel, messages_to_delete: list):
+        super().__init__(timeout=600); self.bot = bot_instance; self.answers = answers; self.guild = guild
+        self.appeal_channel = appeal_channel; self.messages_to_delete = messages_to_delete; self.message = None # To store the view's message
 
     async def cleanup(self, interaction: discord.Interaction = None):
-        # Stops the view and deletes all tracked messages in the DM
+        """Stops the view and deletes all tracked messages in the DM."""
         self.stop()
         print(f"Cleaning up {len(self.messages_to_delete)} messages from appeal DM.")
-        for msg in self.messages_to_delete:
+        # Delete messages in reverse order to reduce potential race conditions
+        for msg in reversed(self.messages_to_delete):
             try: await msg.delete()
-            except (discord.NotFound, discord.Forbidden): pass # Ignore if already gone or no perms
+            except (discord.NotFound, discord.Forbidden): pass
         try:
             # Delete the final confirmation message itself
             target_message = interaction.message if interaction else self.message
@@ -538,31 +440,31 @@ class ConfirmAppealView(discord.ui.View):
     async def submit(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer() # Acknowledge click, process below
         embed = create_embed("New Blacklist Appeal", f"**User:** {interaction.user.mention} (`{interaction.user.id}`)\n**Server:** {self.guild.name}", discord.Color.gold())
-        embed.add_field(name="1. Unfairly?", value=f"```{self.answers.get('q1','N/A')}```", inline=False) # Use .get()
-        embed.add_field(name="2. Why Unblacklist?", value=f"```{self.answers.get('q2','N/A')}```", inline=False)
-        embed.add_field(name="3. Proof", value=self.answers.get('proof','N/A'), inline=False)
+        embed.add_field(name="1. Reason for appeal (Why unfair?)", value=f"```{self.answers.get('q1','Not Provided')}```", inline=False)
+        embed.add_field(name="2. Justification for unblacklist", value=f"```{self.answers.get('q2','Not Provided')}```", inline=False)
+        embed.add_field(name="3. Supporting Proof/Statement", value=self.answers.get('proof','N/A'), inline=False)
         embed.set_footer(text=f"User ID: {interaction.user.id}") # For review buttons
         # Make sure bot instance is available for the view
         view_bot = self.bot or interaction.client
-        view_to_send = AppealReviewView(bot=view_bot)
+        view_to_send = AppealReviewView(bot_instance=view_bot)
 
         try:
             await self.appeal_channel.send(embed=embed, view=view_to_send) # Send to staff channel
         except discord.Forbidden:
              print(f"ERROR: Bot lacks permission to send appeal to channel {self.appeal_channel.id}")
-             await interaction.followup.send(embed=create_embed("Error", "Cannot submit appeal (Bot permissions).", discord.Color.red()))
+             await interaction.followup.send(embed=create_embed("Error", "Could not submit appeal (Bot permissions error).", discord.Color.red()), ephemeral=True)
         except Exception as e:
             print(f"ERROR submitting appeal: {e}"); traceback.print_exc()
-            await interaction.followup.send(embed=create_embed("Error", "Unexpected error submitting appeal.", discord.Color.red()))
+            await interaction.followup.send(embed=create_embed("Error", "An unexpected error occurred while submitting the appeal.", discord.Color.red()), ephemeral=True)
         else: # Only send success if it worked
-            await interaction.followup.send(embed=create_embed("✅ Appeal Submitted", "Sent to staff.", discord.Color.green()))
+            await interaction.followup.send(embed=create_embed("✅ Appeal Submitted", "Your appeal has been sent to the staff. You will be contacted if a decision is made.", discord.Color.green()), ephemeral=True)
 
-        await self.cleanup(interaction) # Clean up DM messages regardless of submission success
+        await self.cleanup(interaction) # Clean up DM messages
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger, emoji="❌")
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
-        await interaction.followup.send(embed=create_embed("Appeal Cancelled", "", discord.Color.red()))
+        await interaction.followup.send(embed=create_embed("Appeal Cancelled", "Your appeal submission has been cancelled.", discord.Color.red()), ephemeral=True)
         await self.cleanup(interaction)
 
     async def on_timeout(self):
@@ -572,123 +474,124 @@ class ConfirmAppealView(discord.ui.View):
         try:
             if self.message: # Check message exists
                  # Edit message to show timeout, keep disabled view
-                 await self.message.edit(embed=create_embed("Appeal Timed Out", "Did not submit in time.", discord.Color.red()), view=self)
-                 # Schedule cleanup after a short delay to let user see the timeout message
+                 await self.message.edit(embed=create_embed("Appeal Timed Out", "You did not confirm the submission in time. The appeal has been cancelled.", discord.Color.red()), view=self)
+                 # Schedule cleanup after a short delay
                  await asyncio.sleep(15)
-        except (discord.NotFound, discord.Forbidden): pass # Ignore if message gone or no perms
+        except (discord.NotFound, discord.Forbidden): pass
         except Exception as e: print(f"Error editing message on ConfirmAppealView timeout: {e}")
-        # Clean up messages after timeout (or after delay)
-        await self.cleanup()
+        await self.cleanup() # Clean up messages after timeout
 
-# --- View for Starting Appeal (DM) ---
+# --- View for Starting Appeal (DM - Non-persistent) ---
 class AppealStartView(discord.ui.View):
-    def __init__(self, bot: TicketBot, guild: discord.Guild, reason: str):
-        super().__init__(timeout=1800); self.bot = bot; self.guild = guild; self.reason = reason; self.message = None # Store message this view is attached to
+    """View sent in DM to blacklisted user to initiate the appeal process."""
+    def __init__(self, bot_instance: TicketBot, guild: discord.Guild, reason: str):
+        super().__init__(timeout=1800); self.bot = bot_instance; self.guild = guild; self.reason = reason; self.message = None
 
     async def ask_question(self, channel, user, embed, min_length=0, check_proof=False, timeout=600.0):
         # Helper to ask question, wait for response, track messages for deletion
         bot_msgs_to_delete = []
         user_msg = None
         ask_msg = None
-        err_msg = None
+        err_msg = None # To track the 'too short' message
         try:
             ask_msg = await channel.send(embed=embed); bot_msgs_to_delete.append(ask_msg)
             while True:
+                # Wait for a message from the correct user in the correct channel
                 msg = await self.bot.wait_for('message', check=lambda m: m.author == user and m.channel == channel, timeout=timeout)
                 user_msg = msg # Store user message
                 # Immediately add user message to list for deletion
                 bot_msgs_to_delete.append(user_msg)
 
-                # Clear previous error message if any
+                # Clear previous error message if any before validation
                 if err_msg:
                     try: await err_msg.delete(); bot_msgs_to_delete.remove(err_msg); err_msg = None
                     except: pass # Ignore delete errors
 
+                # Validation
                 if check_proof: return bot_msgs_to_delete, user_msg # Proof is just the message
                 if len(msg.content) < min_length:
-                     err_msg = await channel.send(embed=create_embed("Too Short", f"Min {min_length} chars.", discord.Color.orange())); bot_msgs_to_delete.append(err_msg)
+                     err_msg = await channel.send(embed=create_embed("Input Too Short", f"Your response must be at least {min_length} characters long. Please try again.", discord.Color.orange())); bot_msgs_to_delete.append(err_msg)
                      continue # Ask again
-                return bot_msgs_to_delete, user_msg # Valid text answer
+                # If valid, return collected messages and the user's answer message
+                return bot_msgs_to_delete, user_msg
         except asyncio.TimeoutError:
-            await channel.send(embed=create_embed("Timed Out", "Appeal cancelled.", discord.Color.red()))
-            # Don't delete messages here on timeout, let ConfirmAppealView handle final cleanup or timeout
+            await channel.send(embed=create_embed("Timed Out", f"You took longer than {int(timeout/60)} minutes to respond. The appeal has been cancelled.", discord.Color.red()))
+            # Don't delete messages here, let ConfirmAppealView handle final cleanup or timeout logic if reached
             return bot_msgs_to_delete, None # Signal timeout
         except Exception as e:
              print(f"Error in ask_question: {e}"); traceback.print_exc()
-             await channel.send(embed=create_embed("Error", "An error occurred asking question.", discord.Color.red()))
-             # Don't delete messages here on error
+             await channel.send(embed=create_embed("Error", "An error occurred during the question process. Appeal cancelled.", discord.Color.red()))
              return bot_msgs_to_delete, None # Signal error
 
 
-    @discord.ui.button(label="Start Appeal", style=discord.ButtonStyle.primary, emoji="📜")
+    @discord.ui.button(label="Start Appeal Process", style=discord.ButtonStyle.primary, emoji="📜")
     async def start_appeal(self, interaction: discord.Interaction, button: discord.ui.Button):
         # Disable button immediately
         for item in self.children: item.disabled = True
         try:
             await interaction.response.edit_message(view=self) # Acknowledge and edit original message
-        except discord.NotFound:
-             print("AppealStartView: Original message not found on button click.")
-             # Cannot proceed without original message context usually
-             return
-        except Exception as e:
-             print(f"Error editing original message in start_appeal: {e}")
-             # Try to proceed anyway? Might fail later.
+        except discord.NotFound: print("AppealStartView: Original message not found."); return
+        except Exception as e: print(f"Error editing original message in start_appeal: {e}")
 
         channel = interaction.channel; user = interaction.user
-        messages_to_delete = [interaction.message]; answers = {} # Track original interaction msg
+        # Track all messages (bot prompts + user answers) for final cleanup
+        messages_to_delete = [interaction.message]; answers = {}
 
         # Ensure bot has instance
-        if not self.bot: self.bot = interaction.client
-        if not self.bot: print("CRITICAL ERROR: Bot instance lost in start_appeal."); await channel.send("Internal error."); return
+        current_bot = self.bot or interaction.client
+        if not current_bot: print("CRITICAL ERROR: Bot instance lost."); await channel.send("Internal error."); return
 
-        settings = self.bot.get_guild_settings(self.guild.id); appeal_channel_id = settings.get("appeal_channel")
-        if not appeal_channel_id: await channel.send(embed=create_embed("Error", f"Appeal system for **{self.guild.name}** not configured.", discord.Color.red())); return
+        settings = current_bot.get_guild_settings(self.guild.id); appeal_channel_id = settings.get("appeal_channel")
+        if not appeal_channel_id: await channel.send(embed=create_embed("Error", f"The appeal system for **{self.guild.name}** is not configured.", discord.Color.red())); return
         appeal_channel = self.guild.get_channel(appeal_channel_id)
-        if not appeal_channel or not isinstance(appeal_channel, discord.TextChannel): await channel.send(embed=create_embed("Error", f"Appeal system for **{self.guild.name}** broken.", discord.Color.red())); return
+        if not appeal_channel or not isinstance(appeal_channel, discord.TextChannel): await channel.send(embed=create_embed("Error", f"The appeal channel for **{self.guild.name}** is invalid.", discord.Color.red())); return
 
         # --- Ask Questions ---
-        q1_embed = create_embed("Appeal: Q1/3", "Why unfairly blacklisted?", discord.Color.blue()).set_footer(text="10 min, min 3 chars.")
-        bot_msgs, answer1_msg = await self.ask_question(channel, user, q1_embed, 3); messages_to_delete.extend(bot_msgs)
-        if not answer1_msg: await self.cleanup_on_fail(messages_to_delete); return # Timeout/Error
+        q1_embed = create_embed("Appeal Question 1/3", "Please explain why you believe your blacklist was incorrect or unfair.", discord.Color.blue()).set_footer(text="Response required (min. 5 characters). 10 minute time limit.")
+        bot_msgs, answer1_msg = await self.ask_question(channel, user, q1_embed, 5, timeout=600.0); messages_to_delete.extend(bot_msgs)
+        if not answer1_msg: await self.cleanup_on_fail(messages_to_delete); return # Timeout/Error during Q1
         answers['q1'] = answer1_msg.content
 
-        q2_embed = create_embed("Appeal: Q2/3", "Why unblacklist?", discord.Color.blue()).set_footer(text="10 min, min 3 chars.")
-        bot_msgs, answer2_msg = await self.ask_question(channel, user, q2_embed, 3); messages_to_delete.extend(bot_msgs)
-        if not answer2_msg: await self.cleanup_on_fail(messages_to_delete); return
+        q2_embed = create_embed("Appeal Question 2/3", "Why should your blacklist be removed? What assurances can you provide regarding future conduct?", discord.Color.blue()).set_footer(text="Response required (min. 5 characters). 10 minute time limit.")
+        bot_msgs, answer2_msg = await self.ask_question(channel, user, q2_embed, 5, timeout=600.0); messages_to_delete.extend(bot_msgs)
+        if not answer2_msg: await self.cleanup_on_fail(messages_to_delete); return # Timeout/Error during Q2
         answers['q2'] = answer2_msg.content
 
-        q3_embed = create_embed("Appeal: Q3/3", "Provide proof (screenshots, etc.) or type `N/A`.", discord.Color.blue()).set_footer(text="10 min.")
-        bot_msgs, answer3_msg = await self.ask_question(channel, user, q3_embed, 0, check_proof=True); messages_to_delete.extend(bot_msgs)
-        if not answer3_msg: await self.cleanup_on_fail(messages_to_delete); return
+        q3_embed = create_embed("Appeal Question 3/3", "Please provide any supporting evidence (images, screenshots) or further statements. If none, type `N/A`.", discord.Color.blue()).set_footer(text="Optional. 10 minute time limit.")
+        bot_msgs, answer3_msg = await self.ask_question(channel, user, q3_embed, 0, check_proof=True, timeout=600.0); messages_to_delete.extend(bot_msgs)
+        if not answer3_msg: await self.cleanup_on_fail(messages_to_delete); return # Timeout/Error during Q3
+        # Process proof message (text and attachments)
         proof_content = answer3_msg.content if answer3_msg.content else "N/A"
-        if answer3_msg.attachments: proof_urls = "\n".join([att.url for att in answer3_msg.attachments]); proof_content = f"{proof_content}\n{proof_urls}" if proof_content != "N/A" else proof_urls
+        if answer3_msg.attachments:
+             proof_urls = "\n".join([att.url for att in answer3_msg.attachments])
+             proof_content = f"{proof_content}\n{proof_urls}" if proof_content != "N/A" else proof_urls
         answers['proof'] = proof_content
 
         # --- Confirmation Step ---
-        summary_embed = create_embed("Confirm Appeal", "Review answers. Submit?", discord.Color.green())
-        summary_embed.add_field(name="1. Unfairly?", value=f"```{answers['q1']}```", inline=False)
-        summary_embed.add_field(name="2. Why Unblacklist?", value=f"```{answers['q2']}```", inline=False)
-        summary_embed.add_field(name="3. Proof", value=answers['proof'], inline=False)
+        summary_embed = create_embed("Confirm Your Appeal Submission", "Please review your answers. Press 'Submit Appeal' to send this to the staff or 'Cancel'.", discord.Color.green())
+        summary_embed.add_field(name="1. Why unfair?", value=f"```{answers['q1']}```", inline=False)
+        summary_embed.add_field(name="2. Why unblacklist?", value=f"```{answers['q2']}```", inline=False)
+        summary_embed.add_field(name="3. Proof/Statement", value=answers['proof'], inline=False)
         # Pass ALL messages collected so far to ConfirmAppealView for eventual deletion
-        confirm_view = ConfirmAppealView(self.bot, answers, self.guild, appeal_channel, messages_to_delete)
+        confirm_view = ConfirmAppealView(current_bot, answers, self.guild, appeal_channel, messages_to_delete)
         confirm_view.message = await channel.send(embed=summary_embed, view=confirm_view)
-        # Do NOT add confirm_view.message to messages_to_delete here. Confirm view handles itself.
+        # Confirm view now handles deletion of its own message and all previous messages
 
     async def cleanup_on_fail(self, messages: list):
-        # Helper to clean up messages if a step fails (e.g., timeout) before confirm view
-        print("Cleaning up messages after appeal step failure.")
-        for msg in messages:
+        # Helper to clean up messages if a step fails before confirm view
+        print("Cleaning up messages after appeal step failure (timeout/error).")
+        for msg in reversed(messages): # Delete in reverse
             try: await msg.delete()
             except (discord.NotFound, discord.Forbidden): pass
 
     async def on_timeout(self):
         # Disables button if user doesn't click "Start Appeal"
-        print("AppealStartView timed out.")
+        print("AppealStartView timed out (user did not click start).")
         for item in self.children: item.disabled = True
         try:
-             if self.message: # Check if message exists before editing
-                await self.message.edit(embed=create_embed(f"Blacklisted on {self.guild.name}", f"Reason:\n```{self.reason}```\nAppeal window expired.", discord.Color.red()), view=self) # Update embed too
-        except (discord.NotFound, discord.Forbidden): pass # Ignore if message gone or no perms
+             if self.message: # Check message exists
+                await self.message.edit(embed=create_embed(f"Blacklisted on {self.guild.name}", f"Reason:\n```{self.reason}```\nThe window to start an appeal has expired.", discord.Color.red()), view=self) # Update embed too
+        except (discord.NotFound, discord.Forbidden): pass
         except Exception as e: print(f"Failed edit appeal start on timeout: {e}")
 
 # --- TICKET PANEL VIEW ---
@@ -699,8 +602,12 @@ class TicketPanelView(discord.ui.View):
 
     async def send_appeal_dm(self, user: discord.Member, guild: discord.Guild, reason: str):
         # Sends the initial DM to blacklisted users
-        embed = create_embed(f"Blacklisted on {guild.name}", f"Reason:\n```{reason}```\nIf you believe this is a mistake, you may submit an appeal below.", discord.Color.red())
-        view = AppealStartView(bot=self.bot, guild=guild, reason=reason)
+        embed = create_embed(f"Blacklisted on {guild.name}", f"You are currently blacklisted from creating tickets.\n**Reason:**\n```{reason}```\nIf you believe this is a mistake, you may submit an appeal below.", discord.Color.red())
+        # Make sure bot instance is passed
+        current_bot = self.bot or user.guild.me # Try getting bot from interaction user's guild if self.bot is None
+        if not current_bot: print("ERROR: Cannot get bot instance for AppealStartView."); return
+
+        view = AppealStartView(bot_instance=current_bot, guild=guild, reason=reason)
         try:
             dm_channel = await user.create_dm()
             view.message = await dm_channel.send(embed=embed, view=view) # Store message for timeout handling
@@ -709,15 +616,14 @@ class TicketPanelView(discord.ui.View):
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         # Runs before any button callback in this view
-        if not self.bot:
-             print("TicketPanelView: Bot instance missing, attaching from interaction.")
-             self.bot = interaction.client
-             if not self.bot:
-                 print("CRITICAL ERROR: Could not get bot instance in TicketPanelView interaction_check.")
-                 await interaction.response.send_message("Internal bot error.", ephemeral=True)
-                 return False
+        current_bot = self.bot or interaction.client # Ensure bot instance
+        if not current_bot:
+             print("CRITICAL ERROR: Could not get bot instance in TicketPanelView interaction_check.")
+             await interaction.response.send_message("Internal bot error.", ephemeral=True)
+             return False
+        self.bot = current_bot # Update self.bot if it was missing
 
-        if not interaction.guild: return False # Should not happen with guild buttons
+        if not interaction.guild: return False # Should not happen
 
         settings = self.bot.get_guild_settings(interaction.guild.id)
         blacklist = settings.get("blacklist", {}); user_id_str = str(interaction.user.id)
@@ -725,16 +631,15 @@ class TicketPanelView(discord.ui.View):
         # --- BLACKLIST CHECK ---
         if user_id_str in blacklist:
             reason = blacklist.get(user_id_str, "No reason provided.")
-            # Respond ephemerally first
-            await send_embed_response(interaction, "Blacklisted", "You cannot create tickets.", discord.Color.red())
-            # Then attempt to send DM (doesn't need interaction context after initial response)
+            # Use send_embed_response which handles interaction state
+            await send_embed_response(interaction, "Blacklisted", "You are currently blacklisted and cannot create new tickets.", discord.Color.red(), ephemeral=True)
             await self.send_appeal_dm(interaction.user, interaction.guild, reason)
             return False # Stop button callback
 
         # --- SETUP CHECK ---
-        if not all(settings.get(key) for key in ['panel_channel', 'ticket_category', 'archive_category', 'staff_role']):
-            # Respond ephemerally
-            await send_embed_response(interaction, "System Offline", "Bot not fully configured.", discord.Color.red())
+        required_settings = ['panel_channel', 'ticket_category', 'archive_category', 'staff_role']
+        if not all(settings.get(key) for key in required_settings):
+            await send_embed_response(interaction, "System Offline", "The ticket system is not fully configured by an administrator.", discord.Color.red(), ephemeral=True)
             return False # Stop button callback
 
         return True # Allow button callback to proceed
@@ -743,87 +648,98 @@ class TicketPanelView(discord.ui.View):
 # bot.py (Part 3/4)
 
     # --- TICKET CREATION BUTTONS ---
-    @discord.ui.button(label="Standard Ticket", style=discord.ButtonStyle.primary, emoji="🎫", custom_id="panel:standard")
+    @discord.ui.button(label="Standard Ticket", style=discord.ButtonStyle.primary, emoji="🎫", custom_id="persistent_panel:standard")
     async def standard_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Handles the creation of a standard support ticket."""
+        # Ensure bot instance is available
+        current_bot = self.bot or interaction.client
+        if not current_bot: print("ERROR: Bot instance missing in standard_ticket."); await interaction.response.send_message("Internal error.", ephemeral=True); return
+        self.bot = current_bot # Update self.bot if needed
+
         settings = self.bot.get_guild_settings(interaction.guild.id)
         TICKET_TYPE = "ticket"; LIMIT = 3; category_id = settings.get('ticket_category')
-        if not category_id:
-            # Check if already responded by interaction_check
-            if not interaction.response.is_done():
-                await send_embed_response(interaction, "Error", "Category not set.", discord.Color.red())
-            return # Stop if category invalid
+        if not category_id: await send_embed_response(interaction, "Setup Error", "Ticket category not configured.", discord.Color.red()); return
 
         current_tickets = count_user_tickets(interaction.guild, interaction.user.id, category_id, TICKET_TYPE)
         if current_tickets >= LIMIT:
-            await send_embed_response(interaction, "Limit Reached", f"Max {LIMIT} standard tickets.", discord.Color.orange())
-            return
+            await send_embed_response(interaction, "Limit Reached", f"You may only have {LIMIT} open standard tickets at a time.", discord.Color.orange()); return
 
-        # Defer response *before* potentially long-running operations like channel creation
+        # Defer BEFORE channel creation
         await interaction.response.defer(ephemeral=True, thinking=True)
         channel, staff_role = await create_ticket_channel(interaction, TICKET_TYPE, settings)
         if channel and staff_role:
-            # Use followup since we deferred
-            await interaction.followup.send(embed=create_embed("Ticket Created", f"{channel.mention}", discord.Color.green()), ephemeral=True)
-            embed = discord.Embed(title="🎫 Standard Ticket", description=f"Welcome, {interaction.user.mention}!\nDescribe your issue. {staff_role.mention} will assist you as soon as possible.", color=discord.Color.blue())
-            # Ensure bot instance is available for the view
-            view_bot = self.bot or interaction.client
-            await channel.send(embed=embed, content=f"{interaction.user.mention} {staff_role.mention}", view=TicketCloseView(bot=view_bot))
-        # No else needed if create_ticket_channel handled the error response
+            # Send ephemeral confirmation via followup
+            await interaction.followup.send(embed=create_embed("Ticket Created", f"Your ticket is ready: {channel.mention}", discord.Color.green()), ephemeral=True)
+            # Send welcome message in the new channel
+            embed = discord.Embed(title="🎫 Standard Support Ticket", description=f"Welcome, {interaction.user.mention}!\n\nPlease describe your question or issue in detail. A member of the {staff_role.mention} team will assist you shortly.", color=discord.Color.blue())
+            # Pass bot instance to the view in the channel
+            await channel.send(embed=embed, content=f"{interaction.user.mention} {staff_role.mention}", view=TicketCloseView(bot=self.bot))
+        # No else needed, create_ticket_channel sends error response on failure
 
-    @discord.ui.button(label="Tryout", style=discord.ButtonStyle.success, emoji="⚔️", custom_id="panel:tryout")
+    @discord.ui.button(label="Tryout Application", style=discord.ButtonStyle.success, emoji="⚔️", custom_id="persistent_panel:tryout")
     async def tryout_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Handles the creation and application process for a tryout ticket."""
+        current_bot = self.bot or interaction.client
+        if not current_bot: print("ERROR: Bot instance missing in tryout_ticket."); await interaction.response.send_message("Internal error.", ephemeral=True); return
+        self.bot = current_bot
+
         settings = self.bot.get_guild_settings(interaction.guild.id)
         TICKET_TYPE = "tryout"; LIMIT = 1; category_id = settings.get('ticket_category')
-        if not category_id:
-             if not interaction.response.is_done(): await send_embed_response(interaction, "Error", "Category not set.", discord.Color.red());
-             return
+        if not category_id: await send_embed_response(interaction, "Setup Error", "Ticket category not configured.", discord.Color.red()); return
+
         current_tickets = count_user_tickets(interaction.guild, interaction.user.id, category_id, TICKET_TYPE)
         if current_tickets >= LIMIT:
-            await send_embed_response(interaction, "Limit Reached", f"Max {LIMIT} tryout ticket.", discord.Color.orange()); return
+            await send_embed_response(interaction, "Limit Reached", f"You may only have {LIMIT} open tryout application at a time.", discord.Color.orange()); return
 
-        await interaction.response.defer(ephemeral=True, thinking=True) # Defer BEFORE creating channel
+        await interaction.response.defer(ephemeral=True, thinking=True) # Defer BEFORE channel creation
         channel, staff_role = await create_ticket_channel(interaction, TICKET_TYPE, settings)
         if not channel or not staff_role: return # Exit if channel/role creation failed
 
-        await interaction.followup.send(embed=create_embed("Ticket Created", f"{channel.mention}", discord.Color.green()), ephemeral=True) # Use followup
-        try: await channel.send(f"{interaction.user.mention} {staff_role.mention}", delete_after=1) # Initial ping
+        await interaction.followup.send(embed=create_embed("Ticket Created", f"Your tryout application channel is ready: {channel.mention}", discord.Color.green()), ephemeral=True)
+        try:
+            # Send a quick ping, delete immediately
+            await channel.send(f"{interaction.user.mention} {staff_role.mention}", delete_after=1)
         except Exception as e: print(f"Warning: Could not send initial ping in {channel.id}: {e}")
 
-        # --- Tryout Application Logic (No Deletion) ---
-        bot_msg_1 = None; username_msg = None; bot_msg_2 = None; stats_msg = None # Define vars outside try
+        # --- Tryout Application Logic (No Message Deletion) ---
+        bot_msg_1 = None; username_msg = None; bot_msg_2 = None; stats_msg = None
         try:
-            username_embed = create_embed("⚔️ Tryout: Step 1/2", "Please provide your Roblox username.", discord.Color.green()).set_footer(text="Respond within 5 minutes.")
+            username_embed = create_embed("⚔️ Tryout Application - Step 1/2", "Please reply to this message with your exact **Roblox Username**.", discord.Color.green()).set_footer(text="You have 5 minutes to respond.")
             bot_msg_1 = await channel.send(embed=username_embed)
             def check_username(m): return m.channel == channel and m.author == interaction.user and not m.author.bot
-            username_msg = await self.bot.wait_for('message', check=check_username, timeout=300.0)
-            roblox_username = username_msg.content
+            username_msg = await self.bot.wait_for('message', check=check_username, timeout=300.0) # 5 minutes
+            roblox_username = username_msg.content.strip() # Remove leading/trailing whitespace
 
-            stats_embed = create_embed("⚔️ Tryout: Step 2/2", f"Username: `{roblox_username}`\nSend a screenshot of your stats from RIVALS.", discord.Color.green()).set_footer(text="Respond within 5 minutes. Message MUST contain an image attachment.")
+            stats_embed = create_embed("⚔️ Tryout Application - Step 2/2", f"Thank you, `{roblox_username}`.\n\nNow, please send a **single message containing a clear screenshot of your stats** from the Roblox game.", discord.Color.green()).set_footer(text="You have 5 minutes to respond. The message MUST contain an image attachment.")
             bot_msg_2 = await channel.send(embed=stats_embed)
             def check_stats(m): return m.channel == channel and m.author == interaction.user and not m.author.bot and m.attachments and m.attachments[0].content_type and m.attachments[0].content_type.startswith('image')
-            stats_msg = await self.bot.wait_for('message', check=check_stats, timeout=300.0)
+            stats_msg = await self.bot.wait_for('message', check=check_stats, timeout=300.0) # 5 minutes
             stats_screenshot_url = stats_msg.attachments[0].url if stats_msg.attachments else None
 
-            success_embed = create_embed("✅ Tryout Application Complete!", f"Thanks for creating a tryout application,{interaction.user.mention}, {staff_role.mention} will review your application and get back to you with further detail.", discord.Color.brand_green())
+            # --- Final Summary Embed ---
+            success_embed = create_embed("✅ Tryout Application Submitted", f"Thank you, {interaction.user.mention}! Your application details are below. A member of the {staff_role.mention} team will review it soon.", discord.Color.brand_green())
             success_embed.add_field(name="Roblox Username", value=roblox_username, inline=False)
             if stats_screenshot_url:
-                try: success_embed.set_image(url=stats_screenshot_url)
-                except Exception as e: print(f"Error setting image URL ({stats_screenshot_url}): {e}"); success_embed.add_field(name="Image Error", value="Could not embed.", inline=False)
-            else: success_embed.add_field(name="Stats Image", value="Not provided/found.", inline=False)
+                try:
+                    success_embed.set_image(url=stats_screenshot_url)
+                except Exception as e:
+                    print(f"Error setting image URL during tryout ({stats_screenshot_url}): {e}")
+                    success_embed.add_field(name="Stats Image Error", value="There was an issue embedding the provided image.", inline=False)
+            else:
+                success_embed.add_field(name="Stats Screenshot", value="Not provided or attachment error.", inline=False)
 
-            # Ensure bot instance is available
-            view_bot = self.bot or interaction.client
-            await channel.send(embed=success_embed, view=TicketCloseView(bot=view_bot))
+            # Send summary and add close/delete buttons
+            await channel.send(embed=success_embed, view=TicketCloseView(bot=self.bot))
 
         except asyncio.TimeoutError:
-            timeout_embed = create_embed("Ticket Closed", "Auto-closed: Inactivity during application.", discord.Color.red())
+            timeout_embed = create_embed("Ticket Closed Automatically", "This tryout ticket has been closed due to inactivity during the application process.", discord.Color.red())
             try:
                 # Check if channel still exists before sending/deleting
                 await channel.send(embed=timeout_embed)
-                await asyncio.sleep(10)
-                await channel.delete(reason="Tryout timeout")
+                await asyncio.sleep(10) # Give user time to see message
+                await channel.delete(reason="Tryout application timeout")
             except discord.NotFound: pass # Channel already gone
-            except discord.Forbidden: print(f"ERROR: Lacking permissions to delete channel {channel.id} after timeout.")
+            except discord.Forbidden: print(f"ERROR: Lacking permissions to delete channel {channel.id} after tryout timeout.")
             except Exception as e: print(f"Error during tryout timeout cleanup for {channel.id}: {e}")
         except Exception as e:
             print(f"ERROR during tryout process in channel {getattr(channel, 'id', 'N/A')}: {e}")
@@ -831,35 +747,41 @@ class TicketPanelView(discord.ui.View):
             try:
                  # Check if channel exists before sending error message
                  if channel:
-                     await channel.send(embed=create_embed("Error", "Unexpected error during application. Try again or create standard ticket.", discord.Color.red()))
+                     await channel.send(embed=create_embed("Application Error", "An unexpected error occurred during the application process. Please close this ticket and try again, or create a standard ticket for help.", discord.Color.red()))
             except Exception as send_error:
                  print(f"Error sending error message to tryout channel: {send_error}")
 
-    @discord.ui.button(label="Report a User", style=discord.ButtonStyle.danger, emoji="🚨", custom_id="panel:report")
+    @discord.ui.button(label="Report a User", style=discord.ButtonStyle.danger, emoji="🚨", custom_id="persistent_panel:report")
     async def report_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Handles the creation of a user report ticket."""
+        current_bot = self.bot or interaction.client
+        if not current_bot: print("ERROR: Bot instance missing in report_ticket."); await interaction.response.send_message("Internal error.", ephemeral=True); return
+        self.bot = current_bot
+
         settings = self.bot.get_guild_settings(interaction.guild.id)
         TICKET_TYPE = "report"; LIMIT = 10; category_id = settings.get('ticket_category')
-        if not category_id:
-             if not interaction.response.is_done(): await send_embed_response(interaction, "Error", "Category not set.", discord.Color.red());
-             return
+        if not category_id: await send_embed_response(interaction, "Setup Error", "Ticket category not configured.", discord.Color.red()); return
+
         current_tickets = count_user_tickets(interaction.guild, interaction.user.id, category_id, TICKET_TYPE)
         if current_tickets >= LIMIT:
-            await send_embed_response(interaction, "Limit Reached", f"Max {LIMIT} report tickets.", discord.Color.orange()); return
+            await send_embed_response(interaction, "Limit Reached", f"You may only have {LIMIT} open report tickets at a time.", discord.Color.orange()); return
 
-        await interaction.response.defer(ephemeral=True, thinking=True) # Defer BEFORE creating channel
+        await interaction.response.defer(ephemeral=True, thinking=True) # Defer BEFORE channel creation
         channel, staff_role = await create_ticket_channel(interaction, TICKET_TYPE, settings)
         if channel and staff_role:
-            await interaction.followup.send(embed=create_embed("Ticket Created", f"{channel.mention}", discord.Color.green()), ephemeral=True) # Use followup
-            embed = discord.Embed(title="🚨 User Report", description=f"Welcome, {interaction.user.mention}, please provide the user, reason and proof. {staff_role.mention} will assist as soon as possible.", color=discord.Color.red())
-            view_bot = self.bot or interaction.client
-            await channel.send(embed=embed, content=f"{interaction.user.mention} {staff_role.mention}", view=TicketCloseView(bot=view_bot))
+            await interaction.followup.send(embed=create_embed("Ticket Created", f"Your report channel is ready: {channel.mention}", discord.Color.green()), ephemeral=True)
+            embed = discord.Embed(title="🚨 User Report",
+                                  description=f"Welcome, {interaction.user.mention}!\n\nPlease provide the following information:\n1. **Username** of the user you are reporting.\n2. **Reason** for the report.\n3. **Detailed description** of the incident.\n4. Any **proof** (screenshots, video links, message links).\n\nA member of the {staff_role.mention} team will review your report.",
+                                  color=discord.Color.red())
+            await channel.send(embed=embed, content=f"{interaction.user.mention} {staff_role.mention}", view=TicketCloseView(bot=self.bot))
 
 
 # --- MODAL FOR TICKET CLOSE REASON ---
 class CloseReasonModal(discord.ui.Modal, title="Close Ticket Reason"):
+    """Modal popup for staff/creator to enter reason for closing ticket."""
     reason_input = discord.ui.TextInput(
         label="Reason for Closing", style=discord.TextStyle.paragraph,
-        placeholder="Enter the reason...", required=True, min_length=3, max_length=1000 # Add max length
+        placeholder="Please provide a brief reason for closing this ticket...", required=True, min_length=5, max_length=1000
     )
 
     def __init__(self, bot_instance: TicketBot, target_channel: discord.TextChannel, closer: discord.Member):
@@ -869,25 +791,24 @@ class CloseReasonModal(discord.ui.Modal, title="Close Ticket Reason"):
         self.closer = closer
 
     async def on_submit(self, interaction: discord.Interaction):
-        # Defer here as close_ticket_logic can take time (API calls, file gen)
+        # Defer ephemerally as logic can take time
         await interaction.response.defer(ephemeral=True, thinking=True)
         reason = self.reason_input.value
-        # Need to instantiate the view to call its method
+        # Instantiate the view containing the close logic
         view_instance = TicketCloseView(bot=self.bot)
         try:
-            # Pass reason to the logic handler
+            # Call the actual closing logic
             await view_instance.close_ticket_logic(self.target_channel, self.closer, reason)
-            await interaction.followup.send("✅ Ticket closing process initiated.", ephemeral=True) # Give success feedback
+            await interaction.followup.send("✅ Ticket closing process initiated.", ephemeral=True)
         except Exception as e:
-            print(f"Error during close_ticket_logic call from modal: {e}")
+            print(f"Error calling close_ticket_logic from modal: {e}")
             traceback.print_exc()
-            await interaction.followup.send("❌ Failed to initiate ticket closing.", ephemeral=True)
-
+            await interaction.followup.send("❌ Failed to initiate ticket closing due to an internal error.", ephemeral=True)
 
     async def on_error(self, interaction: discord.Interaction, error: Exception):
         print(f"ERROR in CloseReasonModal: {error}"); traceback.print_exc()
+        # Attempt to respond ephemerally
         try:
-            # Check if response already sent before sending followup
             if not interaction.response.is_done():
                  await interaction.response.send_message("An error occurred submitting the reason.", ephemeral=True)
             else:
@@ -895,626 +816,559 @@ class CloseReasonModal(discord.ui.Modal, title="Close Ticket Reason"):
         except Exception as e:
              print(f"Error sending on_error message in CloseReasonModal: {e}")
 
-# --- UPDATED TICKET CLOSE VIEW ---
+# --- PERSISTENT TICKET CLOSE VIEW ---
 class TicketCloseView(discord.ui.View):
-    # This view contains the "Close" and "Delete" buttons within a ticket
-    def __init__(self, bot: TicketBot = None):
-        super().__init__(timeout=None); self.bot = bot
+    """View with 'Close' and 'Delete' buttons inside a ticket channel."""
+    def __init__(self, bot_instance: TicketBot = None):
+        super().__init__(timeout=None)
+        # Store bot instance, important for logic after restart
+        self.bot_ref = bot_instance
 
-    @discord.ui.button(label="Close Ticket", style=discord.ButtonStyle.danger, emoji="🔒", custom_id="ticket:close")
+    @discord.ui.button(label="Close Ticket", style=discord.ButtonStyle.danger, emoji="🔒", custom_id="persistent_ticket:close")
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Opens modal to ask for close reason after permission check."""
-        # Ensure bot instance is available
-        if not self.bot:
-            print("TicketCloseView: Bot instance missing, attaching from interaction.")
-            self.bot = interaction.client
-            if not self.bot:
-                 print("CRITICAL ERROR: Could not get bot instance in TicketCloseView.")
-                 await interaction.response.send_message("Internal bot error.", ephemeral=True)
-                 return
+        current_bot = self.bot_ref or interaction.client # Get bot instance
+        if not current_bot: print("CRITICAL ERROR: Bot instance missing in close_ticket."); await interaction.response.send_message("Internal error.", ephemeral=True); return
+        self.bot_ref = current_bot # Update ref if needed
 
-        settings = self.bot.get_guild_settings(interaction.guild.id); staff_role_id = settings.get('staff_role')
+        settings = current_bot.get_guild_settings(interaction.guild.id); staff_role_id = settings.get('staff_role')
         staff_role = interaction.guild.get_role(staff_role_id) if staff_role_id else None
 
-        # Ensure interaction.user is a Member for role checks
-        is_member = isinstance(interaction.user, discord.Member)
-        is_admin = interaction.user.guild_permissions.administrator if is_member else False
-        is_staff = (staff_role and is_member and staff_role in interaction.user.roles)
+        # Ensure interaction.user is a Member for role/perm checks
+        if not isinstance(interaction.user, discord.Member):
+             await send_embed_response(interaction, "Error", "Could not verify permissions.", discord.Color.red()); return
 
+        is_admin = interaction.user.guild_permissions.administrator
+        is_staff = (staff_role and staff_role in interaction.user.roles)
         can_close = False
-        # Allow creator OR staff/admin to close
-        # Use .get() on topic to avoid error if None
+
+        # Allow original ticket creator OR staff/admin to close
         channel_topic = getattr(interaction.channel, 'topic', '') or ""
+        # Check if user ID matches the one in the topic
         if f"ticket-user-{interaction.user.id}" in channel_topic:
             can_close = True # Original creator
         elif is_staff or is_admin:
             can_close = True # Staff/Admin
 
         if not can_close:
-            await send_embed_response(interaction, "Permission Denied", "Only creator or staff can close.", discord.Color.red())
+            await send_embed_response(interaction, "Permission Denied", "Only the ticket creator or a staff member can close this ticket.", discord.Color.red(), ephemeral=True)
             return
 
         # Open the modal to get the reason
-        modal = CloseReasonModal(bot_instance=self.bot, target_channel=interaction.channel, closer=interaction.user)
+        modal = CloseReasonModal(bot_instance=current_bot, target_channel=interaction.channel, closer=interaction.user)
         await interaction.response.send_modal(modal)
 
-    @discord.ui.button(label="Delete Ticket", style=discord.ButtonStyle.secondary, emoji="🗑️", custom_id="ticket:delete")
+    @discord.ui.button(label="Delete Ticket", style=discord.ButtonStyle.secondary, emoji="🗑️", custom_id="persistent_ticket:delete")
     async def delete_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Permanently deletes ticket, staff only."""
-        if not self.bot:
-             print("TicketCloseView: Bot instance missing, attaching from interaction.")
-             self.bot = interaction.client
-             if not self.bot: print("CRITICAL ERROR: Bot instance lost."); await interaction.response.send_message("Internal error.", ephemeral=True); return
+        """Permanently deletes ticket, staff/admin only."""
+        current_bot = self.bot_ref or interaction.client
+        if not current_bot: print("CRITICAL ERROR: Bot instance missing."); await interaction.response.send_message("Internal error.", ephemeral=True); return
+        self.bot_ref = current_bot
 
-        settings = self.bot.get_guild_settings(interaction.guild.id); staff_role_id = settings.get('staff_role')
-        if not staff_role_id: await send_embed_response(interaction, "Error", "Staff role not configured.", discord.Color.red()); return
+        settings = current_bot.get_guild_settings(interaction.guild.id); staff_role_id = settings.get('staff_role')
+        if not staff_role_id: await send_embed_response(interaction, "Setup Error", "Staff role not configured.", discord.Color.red()); return
         staff_role = interaction.guild.get_role(staff_role_id)
-        if not staff_role: await send_embed_response(interaction, "Error", "Staff role not found.", discord.Color.red()); return
+        if not staff_role: await send_embed_response(interaction, "Setup Error", "Staff role configured but not found.", discord.Color.red()); return
 
-        # Ensure interaction.user is a Member
-        if not isinstance(interaction.user, discord.Member):
-             await send_embed_response(interaction, "Error", "Could not verify permissions.", discord.Color.red()); return
-
+        if not isinstance(interaction.user, discord.Member): await send_embed_response(interaction, "Error", "Could not verify permissions.", discord.Color.red()); return
         is_admin = interaction.user.guild_permissions.administrator
         is_staff = staff_role in interaction.user.roles
 
         if not is_staff and not is_admin:
-            await send_embed_response(interaction, "Permission Denied", "Staff/Admin only.", discord.Color.red()); return
+            await send_embed_response(interaction, "Permission Denied", "Only staff members or administrators can permanently delete tickets.", discord.Color.red(), ephemeral=True); return
 
-        # Defer first before sending warning message
-        await interaction.response.defer(ephemeral=True) # Ephemeral defer is fine, warning is followup
-        embed = create_embed("🗑️ Ticket Deletion", f"Marked by {interaction.user.mention}.\n**Deleting in 10s.**", discord.Color.dark_red())
-        # Send non-ephemeral warning
-        warning_message = await interaction.followup.send(embed=embed, ephemeral=False, wait=True)
+        # Respond ephemerally first to confirm the action will start
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        embed = create_embed("🗑️ Confirm Ticket Deletion", f"This ticket will be **permanently deleted** by {interaction.user.mention} in 10 seconds.", discord.Color.dark_red())
+        # Send non-ephemeral warning message
+        warning_message = await interaction.channel.send(embed=embed) # Send to channel directly
 
-        await asyncio.sleep(10)
+        # Send ephemeral confirmation to the user who clicked
+        await interaction.followup.send("Deletion initiated.", ephemeral=True)
+
+        await asyncio.sleep(10) # 10 second countdown
         try:
-            await interaction.channel.delete(reason=f"Deleted by {interaction.user.name}")
-            # Try to delete the warning message after channel deletion (might fail if perms change fast)
-            # try: await warning_message.delete()
-            # except: pass # Ignore if delete fails
+            print(f"Attempting to delete channel {interaction.channel.id} (Ticket Delete)")
+            await interaction.channel.delete(reason=f"Ticket permanently deleted by {interaction.user.name} ({interaction.user.id})")
+            # Don't try to delete warning message, channel is gone
         except discord.NotFound: pass # Channel already gone
         except discord.Forbidden:
              print(f"ERROR: Lacking delete permissions for channel {interaction.channel.id}")
-             # Try sending ephemeral error *if possible*
-             try: await interaction.followup.send(embed=create_embed("Error", "Lacking delete permissions.", discord.Color.red()), ephemeral=True)
-             except Exception: pass
+             # Cannot send followup here as channel might be gone, log is sufficient
         except Exception as e:
             print(f"ERROR deleting ticket channel {interaction.channel.id}: {e}")
             traceback.print_exc()
-            try: await interaction.followup.send(embed=create_embed("Error", "Failed to delete ticket.", discord.Color.red()), ephemeral=True)
-            except Exception: pass
+            # Cannot send followup here
 
     # --- Close Ticket Logic (Handles Archiving) ---
     async def close_ticket_logic(self, channel: discord.TextChannel, user: discord.Member, reason: str = "No reason provided"):
         """Handles transcript generation, message sending, and channel archival."""
         guild = channel.guild
-        if not guild: return # Should not happen in guild channel context
+        if not guild: print(f"ERROR: Cannot close ticket, no guild context for channel {channel.id}."); return
 
-        # Ensure bot has instance
-        if not self.bot:
-             print("CRITICAL ERROR: Bot instance missing in close_ticket_logic.")
-             try: await channel.send("Internal error closing ticket.")
-             except: pass
-             return
+        # Ensure bot instance is available
+        current_bot = self.bot_ref or channel.guild.me.bot # Try getting bot instance
+        if not current_bot: print("CRITICAL ERROR: Bot instance missing in close_ticket_logic."); await channel.send("Internal error closing ticket."); return
+        self.bot_ref = current_bot
 
-        settings = self.bot.get_guild_settings(guild.id)
+        settings = current_bot.get_guild_settings(guild.id)
         archive_category_id = settings.get('archive_category')
-        if not archive_category_id:
-            await channel.send(embed=create_embed("Error", "Archive category not set.", discord.Color.red())); return
+        if not archive_category_id: await channel.send(embed=create_embed("Configuration Error", "Archive category not set.", discord.Color.red())); return
         archive_category = guild.get_channel(archive_category_id)
-        if not archive_category or not isinstance(archive_category, discord.CategoryChannel):
-            await channel.send(embed=create_embed("Error", "Archive category invalid.", discord.Color.red())); return
+        if not archive_category or not isinstance(archive_category, discord.CategoryChannel): await channel.send(embed=create_embed("Configuration Error", "Archive category is invalid or not found.", discord.Color.red())); return
 
         # Send "Closing..." message immediately
-        closing_msg = await channel.send(embed=create_embed("Archiving...", f"Ticket is being closed by {user.mention} and archived.", discord.Color.light_grey()))
+        closing_msg = None
+        try: closing_msg = await channel.send(embed=create_embed("Archiving Ticket...", f"Ticket is being closed by {user.mention} and archived. Generating transcript...", discord.Color.light_grey()))
+        except discord.Forbidden: print(f"Cannot send 'Archiving' message in {channel.id}"); # Proceed anyway
+        except Exception as e: print(f"Error sending 'Archiving' message: {e}")
 
-        # Generate Transcript (can take time)
+        # Generate Transcript
         transcript_file = await generate_transcript(channel)
 
         # Prepare closing embed with reason
         embed = discord.Embed(title="Ticket Closed", description=f"Closed by: {user.mention}\n**Reason:**\n```{reason}```", color=discord.Color.orange())
         transcript_file.seek(0)
-        transcript_message = None
+        transcript_message = None # To potentially remove view later
         try:
-            # Send transcript file with the embed
-            transcript_message = await channel.send(
-                embed=embed,
-                file=discord.File(transcript_file, filename=f"{channel.name}-transcript.txt")
-            )
+            transcript_message = await channel.send(embed=embed, file=discord.File(transcript_file, filename=f"{channel.name}-transcript.txt"))
         except discord.HTTPException as e:
-            if e.code == 40005: # Request Entity Too Large
-                await channel.send(embed=create_embed("Transcript Too Large", "Transcript exceeds Discord's file size limit.", discord.Color.orange()))
-                # Still send the closing embed without the file
-                try: await channel.send(embed=embed)
-                except Exception as send_err: print(f"Error sending closing embed after transcript fail: {send_err}")
-            else:
-                await channel.send(embed=create_embed("Error", f"Could not upload transcript: {e}", discord.Color.red()))
-                try: await channel.send(embed=embed) # Try sending embed anyway
-                except Exception as send_err: print(f"Error sending closing embed after transcript fail: {send_err}")
-        except discord.Forbidden:
-             await channel.send(embed=create_embed("Error", "Lacking permissions to send file/embed.", discord.Color.red()))
-        except Exception as e:
-             print(f"ERROR sending transcript for {channel.id}: {e}")
-             traceback.print_exc()
-             await channel.send(embed=create_embed("Error", f"Transcript send error: {e}", discord.Color.red()))
+            if e.code == 40005: await channel.send(embed=create_embed("Transcript Too Large", "Transcript exceeds Discord's file size limit. Archiving without transcript upload.", discord.Color.orange()))
+            else: await channel.send(embed=create_embed("Error", f"Could not upload transcript (HTTP {e.code}): {e.text}", discord.Color.red()))
+            try: await channel.send(embed=embed) # Still send close embed
+            except Exception: pass
+        except discord.Forbidden: await channel.send(embed=create_embed("Error", "Lacking permissions to send transcript file/embed.", discord.Color.red()))
+        except Exception as e: print(f"ERROR sending transcript for {channel.id}: {e}"); traceback.print_exc(); await channel.send(embed=create_embed("Error", f"Transcript send error.", discord.Color.red()))
 
-        # Clean up "Closing..." message
-        try: await closing_msg.delete()
-        except: pass
+        # Clean up "Closing..." message if it was sent
+        if closing_msg:
+             try: await closing_msg.delete()
+             except: pass
 
-        await asyncio.sleep(3) # Shorter delay before moving
+        await asyncio.sleep(3) # Short delay
 
-        # Prepare overwrites for archived channel (deny @everyone, allow bot, allow staff read-only)
+        # Prepare overwrites for archived channel
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False, view_channel=False),
-            guild.me: discord.PermissionOverwrite(read_messages=True, view_channel=True) # Ensure bot can see it
+            guild.me: discord.PermissionOverwrite(read_messages=True, view_channel=True, send_messages=True) # Ensure bot can send final message
         }
         staff_role_id = settings.get('staff_role')
-        if staff_role_id:
-             staff_role = guild.get_role(staff_role_id)
-             if staff_role:
-                 overwrites[staff_role] = discord.PermissionOverwrite(read_messages=True, send_messages=False, view_channel=True) # Staff read-only
+        if staff_role_id and (staff_role := guild.get_role(staff_role_id)):
+            overwrites[staff_role] = discord.PermissionOverwrite(read_messages=True, send_messages=False, view_channel=True) # Staff read-only
 
         # Try to move and edit permissions
         try:
-            # Sanitize name further for archival to avoid potential conflicts
-            base_name = channel.name.replace("closed-","") # Remove previous "closed-" if any
-            closed_name = f"closed-{base_name[:75]}-{channel.id}"[:100] # Ensure unique and within limits
-
+            base_name = channel.name.replace("closed-","")[:75] # Remove previous prefix, limit length
+            closed_name = f"closed-{base_name}-{channel.id}"[:100] # Ensure unique name
             await channel.edit(
-                name=closed_name,
-                category=archive_category,
-                overwrites=overwrites,
-                reason=f"Closed by {user.name}. Reason: {reason}"
+                name=closed_name, category=archive_category, overwrites=overwrites,
+                reason=f"Ticket closed by {user.name}. Reason: {reason}"
             )
 
-            # Attempt to remove view from the *transcript message*
+            # Attempt to remove view from the transcript message
             if transcript_message:
-                 try:
-                     await transcript_message.edit(view=None)
-                 except (discord.NotFound, discord.Forbidden): pass # Ignore if message gone or no perms
+                 try: await transcript_message.edit(view=None)
+                 except (discord.NotFound, discord.Forbidden): pass
                  except Exception as edit_err: print(f"Failed to remove view from transcript msg: {edit_err}")
 
-            # Send final confirmation
-            await channel.send(embed=create_embed("Archived", f"Moved to {archive_category.name} and locked.", discord.Color.greyple()))
+            # Send final confirmation *after* move and edit
+            await channel.send(embed=create_embed("Ticket Archived", f"This ticket has been moved to the {archive_category.name} category and is now read-only for staff.", discord.Color.greyple()))
 
-        except discord.Forbidden:
-            print(f"ERROR: Bot lacks permissions to move/edit channel {channel.id} to archive.")
-            await channel.send(embed=create_embed("Error", "Lacking permissions to archive.", discord.Color.red()))
-        except discord.NotFound:
-            print(f"WARNING: Channel {channel.id} not found during archival (possibly deleted).")
-        except Exception as e:
-            print(f"ERROR during archival of {channel.id}: {e}")
-            traceback.print_exc()
-            await channel.send(embed=create_embed("Error", f"Archival error: {e}", discord.Color.red()))
+        except discord.Forbidden: print(f"ERROR: Bot lacks permissions to move/edit channel {channel.id} to archive."); await channel.send(embed=create_embed("Error", "Lacking permissions to archive.", discord.Color.red()))
+        except discord.NotFound: print(f"WARNING: Channel {channel.id} not found during archival.")
+        except Exception as e: print(f"ERROR during archival of {channel.id}: {e}"); traceback.print_exc(); await channel.send(embed=create_embed("Error", f"Archival error.", discord.Color.red()))
 
 # End of Part 3/4
 # bot.py (Part 4/4)
 
-# --- SETUP COMMANDS (Hybrid - Works as '!' and '/') ---
-# Use 4 spaces for decorators and def, 8 spaces inside functions
+# --- SLASH COMMAND GROUPS ---
+# Group setup commands under /setup
+setup_group = app_commands.Group(name="setup", description="Admin commands to configure the ticket bot.", guild_only=True, default_permissions=discord.Permissions(administrator=True))
+# Group ticket management commands under /ticket
+ticket_group = app_commands.Group(name="ticket", description="Staff commands to manage tickets.", guild_only=True) # Permissions checked within commands
+# Group moderation commands under /mod
+mod_group = app_commands.Group(name="mod", description="Moderation related commands.", guild_only=True)
 
-@bot.hybrid_command(name="set_panel_channel", description="Sets channel for the ticket panel.")
-@commands.has_permissions(administrator=True)
-@app_commands.describe(channel="Channel for the ticket panel.")
-async def set_panel_channel(ctx: commands.Context, channel: discord.TextChannel):
-    bot.update_guild_setting(ctx.guild.id, "panel_channel", channel.id)
-    await send_embed_response(ctx, "Setup", f"Panel channel set to {channel.mention}", discord.Color.green())
 
-@bot.hybrid_command(name="set_ticket_category", description="Sets category for new tickets.")
-@commands.has_permissions(administrator=True)
-@app_commands.describe(category="Category for new tickets.")
-async def set_ticket_category(ctx: commands.Context, category: discord.CategoryChannel):
-    bot.update_guild_setting(ctx.guild.id, "ticket_category", category.id)
-    await send_embed_response(ctx, "Setup", f"Ticket category set to `{category.name}`", discord.Color.green())
+# --- SETUP COMMANDS (Now under /setup group) ---
 
-@bot.hybrid_command(name="set_archive_category", description="Sets category for closed tickets.")
-@commands.has_permissions(administrator=True)
-@app_commands.describe(category="Category for archived tickets.")
-async def set_archive_category(ctx: commands.Context, category: discord.CategoryChannel):
-    bot.update_guild_setting(ctx.guild.id, "archive_category", category.id)
-    await send_embed_response(ctx, "Setup", f"Archive category set to `{category.name}`", discord.Color.green())
+@setup_group.command(name="panel_channel", description="Sets the channel where the ticket creation panel is posted.")
+@app_commands.describe(channel="The text channel for the panel.")
+@app_commands.checks.has_permissions(administrator=True)
+async def set_panel_channel(interaction: discord.Interaction, channel: discord.TextChannel):
+    """Sets the channel for the ticket creation panel."""
+    bot.update_guild_setting(interaction.guild.id, "panel_channel", channel.id)
+    await send_embed_response(interaction, "Setup Complete", f"Ticket panel channel has been set to {channel.mention}", discord.Color.green())
 
-@bot.hybrid_command(name="set_staff_role", description="Sets the main staff role.")
-@commands.has_permissions(administrator=True)
-@app_commands.describe(role="Your staff/support role.")
-async def set_staff_role(ctx: commands.Context, role: discord.Role):
-    bot.update_guild_setting(ctx.guild.id, "staff_role", role.id)
-    await send_embed_response(ctx, "Setup", f"Staff role set to {role.mention}", discord.Color.green())
+@setup_group.command(name="ticket_category", description="Sets the category where new tickets will be created.")
+@app_commands.describe(category="The category channel for new tickets.")
+@app_commands.checks.has_permissions(administrator=True)
+async def set_ticket_category(interaction: discord.Interaction, category: discord.CategoryChannel):
+    """Sets the category for new tickets."""
+    bot.update_guild_setting(interaction.guild.id, "ticket_category", category.id)
+    await send_embed_response(interaction, "Setup Complete", f"New tickets will be created in the `{category.name}` category.", discord.Color.green())
 
-@bot.hybrid_command(name="set_escalation_role", description="Sets role for !escalate.")
-@commands.has_permissions(administrator=True)
-@app_commands.describe(role="Senior staff/manager role.")
-async def set_escalation_role(ctx: commands.Context, role: discord.Role):
-    bot.update_guild_setting(ctx.guild.id, "escalation_role", role.id)
-    await send_embed_response(ctx, "Setup", f"Escalation role set to {role.mention}", discord.Color.green())
+@setup_group.command(name="archive_category", description="Sets the category where closed tickets will be moved.")
+@app_commands.describe(category="The category channel for archived tickets.")
+@app_commands.checks.has_permissions(administrator=True)
+async def set_archive_category(interaction: discord.Interaction, category: discord.CategoryChannel):
+    """Sets the category for archived tickets."""
+    bot.update_guild_setting(interaction.guild.id, "archive_category", category.id)
+    await send_embed_response(interaction, "Setup Complete", f"Closed tickets will be moved to the `{category.name}` category.", discord.Color.green())
 
-@bot.hybrid_command(name="set_prefix", description="Sets bot prefix for this server.")
-@commands.has_permissions(administrator=True)
-@app_commands.describe(prefix="New prefix (max 5 chars).")
-async def set_prefix(ctx: commands.Context, prefix: str):
-    if len(prefix) == 0: # Prevent empty prefix
-        await send_embed_response(ctx, "Error", "Prefix cannot be empty.", discord.Color.orange()); return
-    if len(prefix) > 5:
-        await send_embed_response(ctx, "Error", "Prefix max 5 chars.", discord.Color.red()); return
-    bot.update_guild_setting(ctx.guild.id, "prefix", prefix)
-    await send_embed_response(ctx, "Setup", f"Prefix set to `{prefix}`", discord.Color.green())
+@setup_group.command(name="staff_role", description="Sets the primary staff role for ticket access and pings.")
+@app_commands.describe(role="The role designated as staff.")
+@app_commands.checks.has_permissions(administrator=True)
+async def set_staff_role(interaction: discord.Interaction, role: discord.Role):
+    """Sets the main staff role."""
+    bot.update_guild_setting(interaction.guild.id, "staff_role", role.id)
+    await send_embed_response(interaction, "Setup Complete", f"Staff role has been set to {role.mention}", discord.Color.green())
 
-@bot.hybrid_command(name="set_appeal_channel", description="Sets channel for blacklist appeals.")
-@commands.has_permissions(administrator=True)
-@app_commands.describe(channel="Channel for appeal reviews.")
-async def set_appeal_channel(ctx: commands.Context, channel: discord.TextChannel):
-    bot.update_guild_setting(ctx.guild.id, "appeal_channel", channel.id)
-    await send_embed_response(ctx, "Setup", f"Appeal channel set to {channel.mention}", discord.Color.green())
+@setup_group.command(name="escalation_role", description="Sets the senior staff role pinged by /ticket escalate.")
+@app_commands.describe(role="The role to ping for ticket escalations.")
+@app_commands.checks.has_permissions(administrator=True)
+async def set_escalation_role(interaction: discord.Interaction, role: discord.Role):
+    """Sets the escalation role."""
+    bot.update_guild_setting(interaction.guild.id, "escalation_role", role.id)
+    await send_embed_response(interaction, "Setup Complete", f"Escalation role has been set to {role.mention}", discord.Color.green())
 
-# --- PANEL CREATION COMMAND ---
-@bot.hybrid_command(name="create_panel", description="Sends the ticket panel.")
-@commands.has_permissions(administrator=True)
-async def create_panel(ctx: commands.Context):
-    if not await check_setup(ctx): return # Check setup first
-    settings = bot.get_guild_settings(ctx.guild.id); panel_channel_id = settings.get('panel_channel')
-    if not panel_channel_id: await send_embed_response(ctx, "Error", "Panel channel not set.", discord.Color.red()); return
-    panel_channel = bot.get_channel(panel_channel_id)
-    if not panel_channel: await send_embed_response(ctx, "Error", "Panel channel not found.", discord.Color.red()); return
+@setup_group.command(name="appeal_channel", description="Sets the channel where blacklist appeals are sent.")
+@app_commands.describe(channel="The channel for staff to review appeals.")
+@app_commands.checks.has_permissions(administrator=True)
+async def set_appeal_channel(interaction: discord.Interaction, channel: discord.TextChannel):
+    """Sets the blacklist appeal channel."""
+    bot.update_guild_setting(interaction.guild.id, "appeal_channel", channel.id)
+    await send_embed_response(interaction, "Setup Complete", f"Blacklist appeals will be sent to {channel.mention}", discord.Color.green())
 
-    # Check bot permissions in panel channel *before* sending
-    bot_member = ctx.guild.me
+# --- PANEL CREATION COMMAND (Now under /setup group) ---
+@setup_group.command(name="create_panel", description="Sends the ticket creation panel to the configured channel.")
+@app_commands.checks.has_permissions(administrator=True)
+async def create_panel(interaction: discord.Interaction):
+    """Sends the ticket creation panel."""
+    if not await check_setup(interaction): return # Verify setup first
+
+    settings = bot.get_guild_settings(interaction.guild.id)
+    panel_channel_id = settings.get('panel_channel')
+    panel_channel = bot.get_channel(panel_channel_id) if panel_channel_id else None
+
+    if not panel_channel:
+        await send_embed_response(interaction, "Configuration Error", "The panel channel is not set or cannot be found.", discord.Color.red())
+        return
+
+    # Check bot permissions in panel channel
+    bot_member = interaction.guild.me
     perms = panel_channel.permissions_for(bot_member)
     if not perms.send_messages or not perms.embed_links:
-         await send_embed_response(ctx, "Error", f"I lack Send Messages or Embed Links permission in {panel_channel.mention}.", discord.Color.red()); return
+         await send_embed_response(interaction, "Permissions Error", f"I lack Send Messages or Embed Links permission in {panel_channel.mention}.", discord.Color.red()); return
 
-    embed = discord.Embed(title="Support & Tryouts", description="Select an option below to create a ticket.", color=0x2b2d31) # Dark color
-    if ctx.guild.icon: embed.set_thumbnail(url=ctx.guild.icon.url)
-    embed.add_field(name="🎫 Standard Ticket", value="General help, questions, issues.", inline=False)
-    embed.add_field(name="⚔️ Tryout", value="Apply to join the clan.", inline=False)
-    embed.add_field(name="🚨 Report a User", value="Report rule breakers.", inline=False)
-    embed.set_footer(text=f"{ctx.guild.name} Support")
+    embed = discord.Embed(title="Support & Tryouts", description="Select an option below to create a ticket.", color=0x2b2d31)
+    if interaction.guild.icon: embed.set_thumbnail(url=interaction.guild.icon.url)
+    embed.add_field(name="🎫 Standard Ticket", value="For general help, questions, or issues.", inline=False)
+    embed.add_field(name="⚔️ Tryout Application", value="Apply to join the clan.", inline=False)
+    embed.add_field(name="🚨 Report a User", value="Report rule-breaking members (requires evidence).", inline=False)
+    embed.set_footer(text=f"{interaction.guild.name} Support System")
+
     try:
-        # Pass bot instance to the view
+        # Pass bot instance to the persistent view
         await panel_channel.send(embed=embed, view=TicketPanelView(bot=bot))
-        await send_embed_response(ctx, "Panel Created", f"Panel sent to {panel_channel.mention}", discord.Color.green())
-    except discord.Forbidden: await send_embed_response(ctx, "Error", f"Failed to send panel to {panel_channel.mention} (Permission error).", discord.Color.red())
+        await send_embed_response(interaction, "Panel Created", f"The ticket panel has been sent to {panel_channel.mention}", discord.Color.green())
+    except discord.Forbidden: await send_embed_response(interaction, "Error", f"Failed to send panel to {panel_channel.mention} (Permission error).", discord.Color.red())
     except Exception as e:
         print(f"Error sending panel: {e}"); traceback.print_exc()
-        await send_embed_response(ctx, "Error", f"Could not send panel: {e}", discord.Color.red())
+        await send_embed_response(interaction, "Error", f"An unexpected error occurred while sending the panel.", discord.Color.red())
 
-# --- TICKET MANAGEMENT COMMANDS ---
+# --- TICKET MANAGEMENT COMMANDS (Now under /ticket group) ---
 
-# --- STAFF CHECKERS ---
-def is_staff():
-    """Decorator check if user is staff or admin."""
-    async def predicate(ctx: commands.Context) -> bool:
-        if not ctx.guild: return False # Not in a guild
-        if not isinstance(ctx.author, discord.Member): return False # Ensure author is member
+# --- Staff Check Decorator for App Commands ---
+def is_staff_check():
+    async def predicate(interaction: discord.Interaction) -> bool:
+        # Re-use the async check function defined earlier
+        if await is_staff_interaction(interaction):
+            return True
+        # is_staff_interaction already sends the "denied" message
+        return False
+    return app_commands.check(predicate)
 
-        settings = bot.get_guild_settings(ctx.guild.id); staff_role_id = settings.get('staff_role')
-        # Check if staff role is set *and* valid
-        staff_role = ctx.guild.get_role(staff_role_id) if staff_role_id else None
-
-        # Check for admin first, then staff role
-        if ctx.author.guild_permissions.administrator: return True
-        if staff_role and staff_role in ctx.author.roles: return True
-
-        # If neither, send error and return False
-        await send_embed_response(ctx, "Permission Denied", "Staff command only.", discord.Color.red()); return False
-    return commands.check(predicate)
-
-async def is_staff_interaction(interaction: discord.Interaction) -> bool:
-    """Async check function for slash commands if user is staff or admin."""
-    if not interaction.guild: return False # Not in a guild
-    if not isinstance(interaction.user, discord.Member): return False # Ensure user is member
-
-    settings = bot.get_guild_settings(interaction.guild.id); staff_role_id = settings.get('staff_role')
-    staff_role = interaction.guild.get_role(staff_role_id) if staff_role_id else None
-
-    if interaction.user.guild_permissions.administrator: return True
-    if staff_role and staff_role in interaction.user.roles: return True
-
-    await send_embed_response(interaction, "Permission Denied", "Staff command only.", discord.Color.red()); return False
-
-# --- TICKET CHANNEL CHECK ---
-def in_ticket_channel():
-    """Decorator check if command is used in an open ticket channel."""
-    async def predicate(ctx: commands.Context) -> bool:
-        if not ctx.guild: return False # Safety check
-        settings = bot.get_guild_settings(ctx.guild.id)
-        # Check if channel exists and its category matches the configured ticket category
-        if ctx.channel and ctx.channel.category_id == settings.get('ticket_category'): return True
-        await send_embed_response(ctx, "Error", "Only usable in open ticket channels.", discord.Color.red()); return False
-    return commands.check(predicate)
-
-# --- HELP COMMAND ---
-@bot.command(name="help")
-@commands.guild_only()
-@is_staff()
-async def help_command(ctx: commands.Context):
-    """Shows the staff help menu for the bot."""
-    settings = bot.get_guild_settings(ctx.guild.id); prefix = settings.get("prefix", "!")
-    embed = discord.Embed(title="🛠️ Staff Help", description=f"My prefix here is `{prefix}`", color=discord.Color.blue())
-    embed.add_field(name="Setup (Admin Only)", value=
-        "`/set_panel_channel`\n`/set_ticket_category`\n`/set_archive_category`\n"
-        "`/set_staff_role`\n`/set_escalation_role`\n`/set_appeal_channel`\n"
-        f"`{prefix}setprefix` or `/set_prefix`\n`/create_panel`", inline=False)
-    embed.add_field(name="Tickets (Staff Only)", value=
-        f"`{prefix}close` (Use button)\n`{prefix}add @user`\n`{prefix}remove @user`\n"
-        f"`{prefix}rename <name>`\n`{prefix}claim`\n`{prefix}unclaim`\n"
-        f"`{prefix}escalate`\n`{prefix}purge <amount>`\n`{prefix}help`", inline=False)
-    embed.add_field(name="Moderation (Admin Only)", value=
-        f"`{prefix}blacklist @user <reason>`\n`{prefix}unblacklist @user`\n"
-        "`/announce <#channel> <message>`\n`/ticket_stats`", inline=False)
-    embed.set_footer(text="Staff also use buttons: Close, Delete, Approve, Reject")
-    await ctx.send(embed=embed, ephemeral=True) # Help is ephemeral
-
-# --- STANDARD TICKET COMMANDS ---
-@bot.command(name="close")
-@commands.guild_only() # Let button logic handle detailed permission check
-async def close(ctx: commands.Context):
-    """Directs user to use the close button (which includes reason modal)."""
-    settings = bot.get_guild_settings(ctx.guild.id)
-    category_id = settings.get('ticket_category'); archive_id = settings.get('archive_category')
-    # Basic check if it's potentially a ticket channel or already archived
-    if ctx.channel.category_id not in [category_id, archive_id] or category_id is None:
-        await send_embed_response(ctx, "Error", "Not a ticket channel.", discord.Color.red()); return
-    if ctx.channel.category_id == archive_id:
-        await send_embed_response(ctx, "Error", "Already closed.", discord.Color.red()); return
-    # Direct to button for consistency and reason modal
-    await send_embed_response(ctx, "Use Button", "Please use the 'Close Ticket' button below.", discord.Color.blue(), ephemeral=True)
+# --- Ticket Channel Check Decorator for App Commands ---
+def in_ticket_channel_check():
+    async def predicate(interaction: discord.Interaction) -> bool:
+        settings = bot.get_guild_settings(interaction.guild.id)
+        # Check if channel exists and its category matches
+        if interaction.channel and interaction.channel.category_id == settings.get('ticket_category'):
+            return True
+        await send_embed_response(interaction, "Invalid Channel", "This command can only be used within an open ticket channel.", discord.Color.red()); return False
+    return app_commands.check(predicate)
 
 
-@bot.command(name="add")
-@commands.guild_only()
-@is_staff()
-@in_ticket_channel()
-async def add(ctx: commands.Context, user: discord.Member):
+@ticket_group.command(name="add", description="Adds a user to the current ticket.")
+@app_commands.describe(user="The user to add to the ticket.")
+@is_staff_check()
+@in_ticket_channel_check()
+async def ticket_add(interaction: discord.Interaction, user: discord.Member):
     """Adds a user to the current ticket channel."""
     try:
-        await ctx.channel.set_permissions(user, read_messages=True, send_messages=True, view_channel=True)
-        await send_embed_response(ctx, "User Added", f"{user.mention} added by {ctx.author.mention}.", discord.Color.green(), ephemeral=False)
-    except discord.Forbidden: await send_embed_response(ctx, "Error", "Lacking permissions.", discord.Color.red())
-    except Exception as e: await send_embed_response(ctx, "Error", f"Failed: {e}", discord.Color.red())
+        await interaction.channel.set_permissions(user, read_messages=True, send_messages=True, view_channel=True)
+        await send_embed_response(interaction, "User Added", f"{user.mention} has been added to this ticket by {interaction.user.mention}.", discord.Color.green(), ephemeral=False) # Non-ephemeral confirmation
+    except discord.Forbidden: await send_embed_response(interaction, "Permissions Error", "I lack permission to modify channel permissions.", discord.Color.red())
+    except Exception as e: await send_embed_response(interaction, "Error", f"Failed to add user: {e}", discord.Color.red())
 
-
-@bot.command(name="remove")
-@commands.guild_only()
-@is_staff()
-@in_ticket_channel()
-async def remove(ctx: commands.Context, user: discord.Member):
+@ticket_group.command(name="remove", description="Removes a user from the current ticket.")
+@app_commands.describe(user="The user to remove from the ticket.")
+@is_staff_check()
+@in_ticket_channel_check()
+async def ticket_remove(interaction: discord.Interaction, user: discord.Member):
     """Removes a user from the current ticket channel."""
+    # Prevent removing the ticket creator easily? Maybe add a check later.
     try:
-        # Check if user is the original ticket creator (don't remove them easily?)
-        # For simplicity, allow removal, but could add a check here.
-        await ctx.channel.set_permissions(user, overwrite=None) # Reset perms
-        await send_embed_response(ctx, "User Removed", f"{user.mention} removed by {ctx.author.mention}.", discord.Color.orange(), ephemeral=False)
-    except discord.Forbidden: await send_embed_response(ctx, "Error", "Lacking permissions.", discord.Color.red())
-    except Exception as e: await send_embed_response(ctx, "Error", f"Failed: {e}", discord.Color.red())
+        await interaction.channel.set_permissions(user, overwrite=None) # Reset permissions
+        await send_embed_response(interaction, "User Removed", f"{user.mention} has been removed from this ticket by {interaction.user.mention}.", discord.Color.orange(), ephemeral=False)
+    except discord.Forbidden: await send_embed_response(interaction, "Permissions Error", "I lack permission to modify channel permissions.", discord.Color.red())
+    except Exception as e: await send_embed_response(interaction, "Error", f"Failed to remove user: {e}", discord.Color.red())
 
-# --- TICKET TOOL COMMANDS ---
-@bot.command(name="rename")
-@commands.guild_only()
-@is_staff()
-@in_ticket_channel()
-async def rename(ctx: commands.Context, *, new_name: str):
+@ticket_group.command(name="rename", description="Renames the current ticket channel.")
+@app_commands.describe(new_name="The new name for the ticket channel.")
+@is_staff_check()
+@in_ticket_channel_check()
+async def ticket_rename(interaction: discord.Interaction, new_name: str):
     """Renames the current ticket channel."""
     try:
-        # Basic sanitization
-        clean_name = "".join(c for c in new_name if c.isalnum() or c in ('-','_')).lower()[:100] or f"ticket-{ctx.channel.id}"
-        await ctx.channel.edit(name=clean_name)
-        await send_embed_response(ctx, "Renamed", f"Channel renamed to `{clean_name}`.", discord.Color.blue(), ephemeral=False)
-    except discord.Forbidden: await send_embed_response(ctx, "Error", "Lacking rename permissions.", discord.Color.red())
-    except Exception as e: await send_embed_response(ctx, "Error", f"Rename failed: {e}", discord.Color.red())
+        # Sanitize name
+        clean_name = "".join(c for c in new_name if c.isalnum() or c in ('-','_')).lower()[:100] or f"ticket-{interaction.channel.id}"
+        await interaction.channel.edit(name=clean_name)
+        await send_embed_response(interaction, "Ticket Renamed", f"Channel name changed to `{clean_name}`.", discord.Color.blue(), ephemeral=False)
+    except discord.Forbidden: await send_embed_response(interaction, "Permissions Error", "I lack permission to rename this channel.", discord.Color.red())
+    except Exception as e: await send_embed_response(interaction, "Error", f"Failed to rename ticket: {e}", discord.Color.red())
 
-@bot.command(name="escalate")
-@commands.guild_only()
-@is_staff()
-@in_ticket_channel()
-async def escalate(ctx: commands.Context):
+@ticket_group.command(name="escalate", description="Pings the escalation role in the current ticket.")
+@is_staff_check()
+@in_ticket_channel_check()
+async def ticket_escalate(interaction: discord.Interaction):
     """Pings the escalation role in the ticket."""
-    settings = bot.get_guild_settings(ctx.guild.id); esc_role_id = settings.get("escalation_role")
-    if not esc_role_id: await send_embed_response(ctx, "Error", "Escalation role not set.", discord.Color.red()); return
-    esc_role = ctx.guild.get_role(esc_role_id)
-    if not esc_role: await send_embed_response(ctx, "Error", "Escalation role not found.", discord.Color.red()); return
-    embed = create_embed("Ticket Escalated", f"🚨 By {ctx.author.mention}. {esc_role.mention} has been notified.", discord.Color.red())
+    settings = bot.get_guild_settings(interaction.guild.id); esc_role_id = settings.get("escalation_role")
+    if not esc_role_id or not (esc_role := interaction.guild.get_role(esc_role_id)):
+        await send_embed_response(interaction, "Configuration Error", "Escalation role is not set up correctly.", discord.Color.red()); return
+
+    embed = create_embed("Ticket Escalated", f"🚨 This ticket requires senior attention! Escalated by {interaction.user.mention}. {esc_role.mention}, please assist.", discord.Color.red())
     try:
-        await ctx.send(content=esc_role.mention, embed=embed) # Ping the role
-    except discord.Forbidden: await send_embed_response(ctx, "Error", "Cannot send message/ping.", discord.Color.red())
-    except Exception as e: await send_embed_response(ctx, "Error", f"Escalation failed: {e}", discord.Color.red())
+        # Defer before sending non-ephemeral message
+        await interaction.response.defer(ephemeral=True)
+        await interaction.channel.send(content=esc_role.mention, embed=embed) # Ping the role
+        await interaction.followup.send("Escalation ping sent.", ephemeral=True)
+    except discord.Forbidden: await send_embed_response(interaction, "Permissions Error", "I cannot send messages or ping roles in this channel.", discord.Color.red())
+    except Exception as e: await send_embed_response(interaction, "Error", f"Failed to escalate ticket: {e}", discord.Color.red())
 
-
-@bot.command(name="claim")
-@commands.guild_only()
-@is_staff()
-@in_ticket_channel()
-async def claim(ctx: commands.Context):
-    """Claims the current ticket, adding info to the topic."""
-    current_topic = ctx.channel.topic or ""
+@ticket_group.command(name="claim", description="Claims the current ticket to indicate you are handling it.")
+@is_staff_check()
+@in_ticket_channel_check()
+async def ticket_claim(interaction: discord.Interaction):
+    """Claims the current ticket."""
+    current_topic = interaction.channel.topic or ""
     if "claimed-by-" in current_topic:
         claimer_id_str = current_topic.split("claimed-by-")[-1].split(" ")[0]
-        try: claimer_id = int(claimer_id_str); claimer = ctx.guild.get_member(claimer_id) or f"ID: {claimer_id}"
+        try: claimer_id = int(claimer_id_str); claimer = interaction.guild.get_member(claimer_id) or f"User ID: {claimer_id}"
         except ValueError: claimer = "Unknown User"
-        await send_embed_response(ctx, "Error", f"Already claimed by {claimer}.", discord.Color.orange()); return
+        await send_embed_response(interaction, "Already Claimed", f"This ticket is already claimed by {claimer}.", discord.Color.orange()); return
 
     base_topic_parts = current_topic.split(" ")
-    base_topic = base_topic_parts[0] # Assume 'ticket-user-ID' is first
-    # Add simple fallback if topic doesn't start correctly
-    if not base_topic.startswith("ticket-user-"): base_topic = f"ticket-user-{ctx.channel.id}"
-    new_topic = f"{base_topic} claimed-by-{ctx.author.id}"
-    try:
-        await ctx.channel.edit(topic=new_topic)
-        await send_embed_response(ctx, "Ticket Claimed", f"🎫 Claimed by {ctx.author.mention}.", discord.Color.green(), ephemeral=False)
-    except discord.Forbidden: await send_embed_response(ctx, "Error", "Cannot edit topic.", discord.Color.red())
-    except Exception as e: await send_embed_response(ctx, "Error", f"Failed claim: {e}", discord.Color.red())
+    base_topic = base_topic_parts[0]; # Assume 'ticket-user-ID type-TYPE'
+    type_topic = base_topic_parts[1] if len(base_topic_parts) > 1 and base_topic_parts[1].startswith("type-") else ""
+    if not base_topic.startswith("ticket-user-"): base_topic = f"ticket-user-{interaction.channel.id}" # Fallback
+    new_topic = f"{base_topic} {type_topic} claimed-by-{interaction.user.id}".strip() # Add claimer ID
 
-@bot.command(name="unclaim")
-@commands.guild_only()
-@is_staff()
-@in_ticket_channel()
-async def unclaim(ctx: commands.Context):
+    try:
+        await interaction.channel.edit(topic=new_topic)
+        await send_embed_response(interaction, "Ticket Claimed", f"🎫 {interaction.user.mention} has claimed this ticket.", discord.Color.green(), ephemeral=False)
+    except discord.Forbidden: await send_embed_response(interaction, "Permissions Error", "I cannot edit the channel topic.", discord.Color.red())
+    except Exception as e: await send_embed_response(interaction, "Error", f"Failed to claim ticket: {e}", discord.Color.red())
+
+@ticket_group.command(name="unclaim", description="Releases the current ticket back to the queue.")
+@is_staff_check()
+@in_ticket_channel_check()
+async def ticket_unclaim(interaction: discord.Interaction):
     """Unclaims the current ticket."""
-    current_topic = ctx.channel.topic or ""
+    current_topic = interaction.channel.topic or ""
     if "claimed-by-" not in current_topic:
-        await send_embed_response(ctx, "Error", "Not claimed.", discord.Color.orange()); return
+        await send_embed_response(interaction, "Not Claimed", "This ticket is not currently claimed.", discord.Color.orange()); return
 
     claimer_id_str = current_topic.split("claimed-by-")[-1].split(" ")[0]
     try: claimer_id = int(claimer_id_str)
-    except ValueError: await send_embed_response(ctx, "Error", "Could not identify claimer.", discord.Color.red()); return
+    except ValueError: await send_embed_response(interaction, "Error", "Could not identify the claimer from the channel topic.", discord.Color.red()); return
 
-    is_admin = ctx.author.guild_permissions.administrator
-    if ctx.author.id != claimer_id and not is_admin:
-        claimer = ctx.guild.get_member(claimer_id) or f"ID: {claimer_id}"
-        await send_embed_response(ctx, "Permission Denied", f"Claimed by {claimer}.", discord.Color.red()); return
+    # Check if interaction user is the claimer or an admin
+    is_admin = interaction.user.guild_permissions.administrator
+    if interaction.user.id != claimer_id and not is_admin:
+        claimer = interaction.guild.get_member(claimer_id) or f"User ID: {claimer_id}"
+        await send_embed_response(interaction, "Permission Denied", f"This ticket is claimed by {claimer}. Only they or an administrator can unclaim it.", discord.Color.red()); return
 
-    base_topic_parts = current_topic.split(" ")
-    base_topic = base_topic_parts[0] # Assume 'ticket-user-ID' is first
-    if not base_topic.startswith("ticket-user-"): base_topic = f"ticket-user-{ctx.channel.id}" # Fallback
-    try:
-        await ctx.channel.edit(topic=base_topic) # Restore original part of topic
-        await send_embed_response(ctx, "Ticket Unclaimed", "🔓 Unclaimed.", discord.Color.blue(), ephemeral=False)
-    except discord.Forbidden: await send_embed_response(ctx, "Error", "Cannot edit topic.", discord.Color.red())
-    except Exception as e: await send_embed_response(ctx, "Error", f"Failed unclaim: {e}", discord.Color.red())
-
-# --- CORRECTED PURGE COMMAND ---
-@bot.command(name="purge")
-@commands.guild_only()
-@is_staff()
-@in_ticket_channel() # Ensure it's in an open ticket channel
-async def purge(ctx: commands.Context, amount: int):
-    """Deletes messages in the ticket channel (max 100)."""
-    if amount <= 0: await send_embed_response(ctx, "Error", "Amount must be > 0.", discord.Color.orange()); return
-    if amount > 100: await send_embed_response(ctx, "Error", "Max 100 messages.", discord.Color.orange()); return
+    # Reconstruct original topic parts (user ID and type)
+    topic_parts = current_topic.split(" ")
+    base_topic = topic_parts[0] if topic_parts[0].startswith("ticket-user-") else f"ticket-user-{interaction.channel.id}"
+    type_topic = topic_parts[1] if len(topic_parts) > 1 and topic_parts[1].startswith("type-") else ""
+    new_topic = f"{base_topic} {type_topic}".strip() # Remove claimer ID
 
     try:
-        # Purge amount + 1 to include the command message itself (if it's a prefix command)
-        limit = amount + 1 if ctx.prefix else amount # Slash commands don't have a visible trigger message to delete
-        deleted = await ctx.channel.purge(limit=limit)
-        deleted_count = len(deleted)
-        # Adjust count if command message was included and deleted
-        if ctx.prefix and ctx.message in deleted: deleted_count -= 1
+        await interaction.channel.edit(topic=new_topic)
+        await send_embed_response(interaction, "Ticket Unclaimed", f"🔓 {interaction.user.mention} has unclaimed this ticket. It is now open for any staff member.", discord.Color.blue(), ephemeral=False)
+    except discord.Forbidden: await send_embed_response(interaction, "Permissions Error", "I cannot edit the channel topic.", discord.Color.red())
+    except Exception as e: await send_embed_response(interaction, "Error", f"Failed to unclaim ticket: {e}", discord.Color.red())
 
-        await send_embed_response(ctx, "Purged", f"🗑️ Deleted {deleted_count} messages.", discord.Color.green(), ephemeral=True) # Ephemeral confirm
-    except discord.Forbidden: await send_embed_response(ctx, "Error", "No permission to delete.", discord.Color.red())
-    except Exception as e: await send_embed_response(ctx, "Error", f"Purge failed: {e}", discord.Color.red())
+@ticket_group.command(name="purge", description="Deletes a specified number of messages in the ticket (max 100).")
+@app_commands.describe(amount="Number of messages to delete (1-100).")
+@is_staff_check()
+@in_ticket_channel_check()
+async def ticket_purge(interaction: discord.Interaction, amount: app_commands.Range[int, 1, 100]):
+    """Deletes messages in the current ticket channel."""
+    await interaction.response.defer(ephemeral=True, thinking=True) # Defer ephemerally
+    try:
+        deleted = await interaction.channel.purge(limit=amount)
+        await interaction.followup.send(embed=create_embed("Purged Messages", f"🗑️ Successfully deleted {len(deleted)} messages.", discord.Color.green()), ephemeral=True)
+    except discord.Forbidden: await interaction.followup.send(embed=create_embed("Permissions Error", "I lack permission to delete messages.", discord.Color.red()), ephemeral=True)
+    except Exception as e: await interaction.followup.send(embed=create_embed("Error", f"Failed to purge messages: {e}", discord.Color.red()), ephemeral=True)
+
+@ticket_group.command(name="slowmode", description="Sets slowmode in the current ticket channel.")
+@app_commands.describe(delay="Slowmode delay in seconds (0 to disable, max 21600).")
+@is_staff_check()
+@in_ticket_channel_check()
+async def ticket_slowmode(interaction: discord.Interaction, delay: app_commands.Range[int, 0, 21600]):
+    """Sets slowmode delay for the current ticket channel."""
+    try:
+        await interaction.channel.edit(slowmode_delay=delay)
+        status = f"disabled" if delay == 0 else f"set to {delay} seconds"
+        await send_embed_response(interaction, "Slowmode Updated", f"⏳ Slowmode has been {status} for this channel.", discord.Color.blue(), ephemeral=False)
+    except discord.Forbidden: await send_embed_response(interaction, "Permissions Error", "I lack permission to change slowmode.", discord.Color.red())
+    except Exception as e: await send_embed_response(interaction, "Error", f"Failed to set slowmode: {e}", discord.Color.red())
 
 
-# --- BLACKLIST COMMANDS ---
-@bot.hybrid_command(name="blacklist", description="Blacklist a user from creating tickets.")
-@commands.has_permissions(administrator=True) # Admin only
-@app_commands.describe(user="User to blacklist.", reason="Reason for blacklist.")
-async def blacklist(ctx: commands.Context, user: discord.Member, *, reason: str):
-    settings = bot.get_guild_settings(ctx.guild.id); user_id_str = str(user.id)
-    if user.id == ctx.author.id: await send_embed_response(ctx, "Error", "Cannot blacklist self.", discord.Color.orange()); return
-    if user.bot: await send_embed_response(ctx, "Error", "Cannot blacklist bots.", discord.Color.orange()); return
-    # Use .get() to safely access blacklist dict, provide empty dict if missing
-    if user_id_str in settings.get("blacklist", {}): await send_embed_response(ctx, "Error", "Already blacklisted.", discord.Color.orange()); return
-    # Ensure blacklist key exists before assigning
-    if "blacklist" not in settings: settings["blacklist"] = {}
-    settings["blacklist"][user_id_str] = reason; save_settings(bot.settings) # Save changes
-    await send_embed_response(ctx, "User Blacklisted", f"{user.mention} blacklisted: `{reason}`.", discord.Color.red())
+# --- MODERATION COMMANDS (Now under /mod group) ---
 
-@bot.hybrid_command(name="unblacklist", description="Unblacklist a user.")
-@commands.has_permissions(administrator=True) # Admin only
-@app_commands.describe(user="User to unblacklist.")
-async def unblacklist(ctx: commands.Context, user: discord.Member):
-    settings = bot.get_guild_settings(ctx.guild.id); user_id_str = str(user.id)
-    blacklist_dict = settings.get("blacklist", {}) # Use .get()
-    if user_id_str not in blacklist_dict: await send_embed_response(ctx, "Error", "Not blacklisted.", discord.Color.orange()); return
-    del blacklist_dict[user_id_str] # Remove from the dict
-    settings["blacklist"] = blacklist_dict # Update settings with modified dict
-    save_settings(bot.settings) # Save changes
-    await send_embed_response(ctx, "User Unblacklisted", f"{user.mention} unblacklisted.", discord.Color.green())
+@mod_group.command(name="blacklist", description="Blacklists a user from creating tickets.")
+@app_commands.describe(user="The user to blacklist.", reason="The reason for the blacklist (will be shown to user).")
+@app_commands.checks.has_permissions(administrator=True) # Admin only
+async def mod_blacklist(interaction: discord.Interaction, user: discord.Member, reason: str):
+    """Blacklists a user."""
+    if user.id == interaction.user.id: await send_embed_response(interaction, "Error", "You cannot blacklist yourself.", discord.Color.orange()); return
+    if user.bot: await send_embed_response(interaction, "Error", "You cannot blacklist bots.", discord.Color.orange()); return
 
-# --- ANNOUNCE COMMAND ---
-# --- UPDATED ANNOUNCE COMMAND ---
-# --- UPDATED ANNOUNCE COMMAND (Handles Multiple Images) ---
-@bot.hybrid_command(name="announce", description="Send announcement (text, images, or JSON embed).")
-@is_staff() # Make it staff-only
-@app_commands.describe(channel="Channel to announce in.", message="The announcement message (if not using JSON).")
-# Note: Slash command attachment handling requires specific setup not included here yet.
-async def announce(ctx: commands.Context, channel: discord.TextChannel, *, message: str = None):
-    """Sends plain text with optional images, or an embed from attached JSON."""
+    settings = bot.get_guild_settings(interaction.guild.id)
+    user_id_str = str(user.id)
+    blacklist_dict = settings.setdefault("blacklist", {}) # Ensure dict exists
 
-    embed_dict = None
-    json_attachment = None
-    image_attachments = [] # Use a list to store multiple images
+    if user_id_str in blacklist_dict:
+        await send_embed_response(interaction, "Already Blacklisted", f"{user.mention} is already blacklisted for: `{blacklist_dict[user_id_str]}`.", discord.Color.orange()); return
 
-    # 1. Check attachments (Primarily for prefix commands)
-    if isinstance(ctx, commands.Context) and ctx.message.attachments:
-        for attachment in ctx.message.attachments:
-            if attachment.filename.lower().endswith('.json') and json_attachment is None:
-                # Prioritize the first JSON file found
-                json_attachment = attachment
-                print(f"Found JSON attachment: {attachment.filename}")
-                # If we find JSON, we will ignore images and message text
-                break # Stop checking once JSON is found
-            elif attachment.content_type and attachment.content_type.startswith("image/"):
-                image_attachments.append(attachment)
-                print(f"Found image attachment: {attachment.filename}")
-            # else: # Handle other file types if needed
-            #    print(f"Found other attachment type: {attachment.filename}")
+    blacklist_dict[user_id_str] = reason; bot.update_guild_setting(interaction.guild.id, "blacklist", blacklist_dict) # Update whole dict
+    await send_embed_response(interaction, "User Blacklisted", f"{user.mention} has been **blacklisted**. Reason: `{reason}`.", discord.Color.red())
 
-    # 2. Process JSON if found (takes priority)
-    if json_attachment:
+@mod_group.command(name="unblacklist", description="Removes a user from the ticket blacklist.")
+@app_commands.describe(user="The user to unblacklist.")
+@app_commands.checks.has_permissions(administrator=True) # Admin only
+async def mod_unblacklist(interaction: discord.Interaction, user: discord.Member):
+    """Unblacklists a user."""
+    settings = bot.get_guild_settings(interaction.guild.id)
+    user_id_str = str(user.id)
+    blacklist_dict = settings.get("blacklist", {})
+
+    if user_id_str not in blacklist_dict:
+        await send_embed_response(interaction, "Not Found", f"{user.mention} is not currently blacklisted.", discord.Color.orange()); return
+
+    del blacklist_dict[user_id_str]; bot.update_guild_setting(interaction.guild.id, "blacklist", blacklist_dict)
+    await send_embed_response(interaction, "User Unblacklisted", f"{user.mention} has been **unblacklisted** and can now create tickets.", discord.Color.green())
+
+@mod_group.command(name="announce", description="Sends an announcement (plain text or JSON embed).")
+@app_commands.describe(channel="The channel to send the announcement to.", message="The text message (required if no JSON/image attached).", json_file="Attach embed JSON file (overrides message/image).", image_file="Attach an image file (sent with message).")
+@is_staff_check() # Staff check
+async def mod_announce(interaction: discord.Interaction, channel: discord.TextChannel, message: str = None, json_file: discord.Attachment = None, image_file: discord.Attachment = None):
+    """Sends announcement (text, image, or JSON embed). JSON > Image > Text."""
+    await interaction.response.defer(ephemeral=True, thinking=True) # Defer ephemerally
+
+    embed_to_send = None
+    content_to_send = message
+    file_to_send = None
+
+    # 1. Process JSON if provided (takes highest priority)
+    if json_file:
+        if not json_file.filename.lower().endswith('.json'):
+            await interaction.followup.send(embed=create_embed("Error", "Invalid file type. Please attach a `.json` file for embeds.", discord.Color.red()), ephemeral=True); return
         try:
-            json_bytes = await json_attachment.read()
+            json_bytes = await json_file.read()
             embed_data = json.loads(json_bytes.decode('utf-8'))
-            if not isinstance(embed_data, dict): raise ValueError("JSON content is not a valid object.")
-            embed_dict = embed_data
-            print(f"Loaded embed data from {json_attachment.filename}")
-            message = None # Clear message if using JSON embed
-            image_attachments = [] # Clear images if using JSON embed
-        except Exception as e:
-            await send_embed_response(ctx, "Error", f"Failed to process JSON: {e}", discord.Color.red(), ephemeral=True); return
+            if not isinstance(embed_data, dict): raise ValueError("JSON must be an object.")
+            # Validate common embed fields if needed (optional)
+            embed_to_send = discord.Embed.from_dict(embed_data)
+            content_to_send = None # Ignore message if sending JSON embed
+            image_file = None # Ignore image if sending JSON embed
+            print(f"Loaded embed from {json_file.filename}")
+        except Exception as e: await interaction.followup.send(embed=create_embed("JSON Error", f"Failed to process JSON: {e}", discord.Color.red()), ephemeral=True); return
 
-    # 3. Handle message content (only if not sending JSON embed)
-    if embed_dict is None:
-        if message is None and not image_attachments: # Require message only if no JSON AND no images
-            await send_embed_response(ctx, "Error", "You must provide message text, attach image(s), or attach a JSON embed file.", discord.Color.orange(), ephemeral=True); return
-        content_to_send = message # Use the provided message text (can be None if only sending images)
-    else:
-        content_to_send = None # Send only the embed if JSON was loaded
+    # 2. Process Image if provided (and no JSON)
+    elif image_file:
+        if not image_file.content_type or not image_file.content_type.startswith("image/"):
+            await interaction.followup.send(embed=create_embed("Error", "Invalid file type. Please attach an image file.", discord.Color.red()), ephemeral=True); return
+        try:
+            image_bytes = await image_file.read()
+            file_to_send = discord.File(io.BytesIO(image_bytes), filename=image_file.filename)
+            print(f"Prepared image file: {image_file.filename}")
+        except Exception as e: await interaction.followup.send(embed=create_embed("Error", f"Failed to read image: {e}", discord.Color.red()), ephemeral=True); return
 
-    # 4. Prepare image files if any
-    files_to_send = []
-    if image_attachments:
-        if len(image_attachments) > 10:
-             await send_embed_response(ctx, "Error", "Cannot attach more than 10 images at once.", discord.Color.orange(), ephemeral=True); return
-        print(f"Preparing {len(image_attachments)} image files...")
-        for img_att in image_attachments:
-            try:
-                img_bytes = await img_att.read()
-                img_file = discord.File(io.BytesIO(img_bytes), filename=img_att.filename)
-                files_to_send.append(img_file)
-            except Exception as e:
-                print(f"Error reading image attachment {img_att.filename}: {e}")
-                await send_embed_response(ctx, "Warning", f"Could not process image: {img_att.filename}", discord.Color.yellow(), ephemeral=True)
-                # Continue without the failed image
+    # 3. Check if there's anything to send
+    if embed_to_send is None and content_to_send is None and file_to_send is None:
+         await interaction.followup.send(embed=create_embed("Error", "Nothing to announce. Provide message, image, or JSON.", discord.Color.orange()), ephemeral=True); return
 
-    # 5. Send the message/embed/files
+    # 4. Send the announcement
     try:
-        if embed_dict:
-            final_embed = discord.Embed.from_dict(embed_dict)
-            await channel.send(embed=final_embed) # Send only JSON embed
-        elif files_to_send:
-            # Send text content (if any) along with multiple image files
-            await channel.send(content=content_to_send, files=files_to_send)
-        elif content_to_send:
-             # Send only plain text message
-             await channel.send(content=content_to_send)
-        # Else: Should have been caught by check in step 3
+        await channel.send(content=content_to_send, embed=embed_to_send, file=file_to_send)
+        await interaction.followup.send(embed=create_embed("Announcement Sent", f"Message delivered to {channel.mention}.", discord.Color.green()), ephemeral=True)
+    except discord.Forbidden: await interaction.followup.send(embed=create_embed("Permissions Error", f"Cannot send to {channel.mention}.", discord.Color.red()), ephemeral=True)
+    except discord.HTTPException as e: await interaction.followup.send(embed=create_embed("Send Error", f"Failed: {e}", discord.Color.red()), ephemeral=True)
+    except Exception as e: print(f"Error in announce send: {e}"); traceback.print_exc(); await interaction.followup.send(embed=create_embed("Error", "Unexpected send error.", discord.Color.red()), ephemeral=True)
 
-        await send_embed_response(ctx, "Announcement Sent", f"Message sent to {channel.mention}.", discord.Color.green(), ephemeral=True)
 
-    except discord.Forbidden: await send_embed_response(ctx, "Error", f"No permission in {channel.mention}.", discord.Color.red(), ephemeral=True)
-    except discord.HTTPException as e: await send_embed_response(ctx, "Error", f"Failed to send: {e}", discord.Color.red(), ephemeral=True)
-    except Exception as e: print(f"Error in announce send: {e}"); traceback.print_exc(); await send_embed_response(ctx, "Error", f"Unexpected error: {e}", discord.Color.red(), ephemeral=True)
+# --- UTILITY COMMANDS (Adding some useful extras) ---
 
-# --- (Rest of your bot code below) ---
+@bot.tree.command(name="userinfo", description="Displays information about a server member.")
+@app_commands.guild_only()
+@app_commands.describe(member="The member to get information about (optional, defaults to you).")
+async def userinfo(interaction: discord.Interaction, member: discord.Member = None):
+    """Shows details about a user."""
+    target = member or interaction.user # Default to self if member not provided
+    embed = discord.Embed(title=f"User Information - {target.display_name}", color=target.color or discord.Color.blue())
+    if target.avatar: embed.set_thumbnail(url=target.avatar.url)
+    embed.add_field(name="Username", value=f"{target.name}#{target.discriminator}", inline=True)
+    embed.add_field(name="User ID", value=target.id, inline=True)
+    embed.add_field(name="Nickname", value=target.nick or "None", inline=True)
+    embed.add_field(name="Joined Server", value=discord.utils.format_dt(target.joined_at, style='F'), inline=False) # 'F' for full date/time
+    embed.add_field(name="Joined Discord", value=discord.utils.format_dt(target.created_at, style='F'), inline=False)
+    roles = [role.mention for role in target.roles if role.name != "@everyone"]
+    embed.add_field(name=f"Roles ({len(roles)})", value=", ".join(roles) if roles else "None", inline=False)
+    embed.add_field(name="Is Bot?", value="Yes" if target.bot else "No", inline=True)
+    # Add highest role
+    embed.add_field(name="Highest Role", value=target.top_role.mention, inline=True)
+    await interaction.response.send_message(embed=embed, ephemeral=False) # Not ephemeral
 
-# --- (Rest of your bot code below) ---
+@bot.tree.command(name="serverinfo", description="Displays information about the current server.")
+@app_commands.guild_only()
+async def serverinfo(interaction: discord.Interaction):
+    """Shows details about the server."""
+    guild = interaction.guild
+    embed = discord.Embed(title=f"Server Information - {guild.name}", color=discord.Color.blurple())
+    if guild.icon: embed.set_thumbnail(url=guild.icon.url)
+    embed.add_field(name="Server ID", value=guild.id, inline=True)
+    embed.add_field(name="Owner", value=guild.owner.mention if guild.owner else "Unknown", inline=True) # Mention owner
+    embed.add_field(name="Created On", value=discord.utils.format_dt(guild.created_at, style='F'), inline=False)
+    members = guild.member_count or "N/A" # Handle potential None
+    humans = sum(1 for member in guild.members if not member.bot) if guild.members else "N/A"
+    bots = sum(1 for member in guild.members if member.bot) if guild.members else "N/A"
+    embed.add_field(name="Members", value=f"Total: {members}\nHumans: {humans}\nBots: {bots}", inline=True)
+    embed.add_field(name="Channels", value=f"Text: {len(guild.text_channels)}\nVoice: {len(guild.voice_channels)}\nCategories: {len(guild.categories)}", inline=True)
+    embed.add_field(name="Roles", value=len(guild.roles), inline=True)
+    # embed.add_field(name="Boost Level", value=guild.premium_tier, inline=True) # Uncomment if needed
+    # embed.add_field(name="Boosts", value=guild.premium_subscription_count, inline=True) # Uncomment if needed
+    await interaction.response.send_message(embed=embed, ephemeral=False) # Not ephemeral
 
-# --- SLASH-ONLY COMMAND ---
-@bot.tree.command(name="ticket_stats", description="Shows server ticket stats.")
-@app_commands.guild_only() # Ensure it's used in a guild
+
+# --- STATS COMMAND ---
+@bot.tree.command(name="ticket_stats", description="Shows ticket statistics for this server.")
+@app_commands.guild_only()
 async def ticket_stats(interaction: discord.Interaction):
     """Shows stats about tickets on the server (Staff Only)."""
     if not await is_staff_interaction(interaction): return # Check staff permissions
@@ -1528,23 +1382,27 @@ async def ticket_stats(interaction: discord.Interaction):
     if ticket_category_id:
         ticket_category = interaction.guild.get_channel(ticket_category_id)
         if ticket_category and isinstance(ticket_category, discord.CategoryChannel):
-            # Count only text channels within the category
-            open_tickets = len(ticket_category.text_channels)
+            open_tickets = len(ticket_category.text_channels) # Count text channels in category
         else:
-            # Send warning if category is invalid, use followup because we deferred
-             await interaction.followup.send(embed=create_embed("Warning", "Ticket category invalid/not found.", discord.Color.orange()), ephemeral=True)
+            await interaction.followup.send(embed=create_embed("Warning", "Ticket category is invalid or not found. Open count may be inaccurate.", discord.Color.orange()), ephemeral=True)
 
-    embed = discord.Embed(title=f"Ticket Stats: {interaction.guild.name}", color=discord.Color.light_grey())
-    embed.add_field(name="Total Created", value=f"**{total_created}**", inline=True);
-    embed.add_field(name="Open Tickets", value=f"**{open_tickets}**", inline=True)
+    embed = discord.Embed(title=f"Ticket Statistics: {interaction.guild.name}", color=discord.Color.light_grey())
+    embed.add_field(name="Total Tickets Created", value=f"**{total_created}**", inline=True)
+    embed.add_field(name="Currently Open Tickets", value=f"**{open_tickets}**", inline=True)
+    embed.set_footer(text="Counts include all ticket types.")
     await interaction.followup.send(embed=embed, ephemeral=True) # Send stats ephemerally
+
+# Add command groups to the tree
+bot.tree.add_command(setup_group)
+bot.tree.add_command(ticket_group)
+bot.tree.add_command(mod_group)
 
 
 # --- RUN THE BOT ---
 if __name__ == "__main__": # Good practice to wrap run call
     try:
         print("Attempting to run bot...")
-        bot.run(TOKEN)
+        bot.run(TOKEN, log_handler=None) # Disable default discord.py logging if desired, or configure it
     except discord.errors.LoginFailure:
         print("CRITICAL ERROR: Login Failure - Improper token passed. Check .env file.")
     except discord.errors.PrivilegedIntentsRequired:
