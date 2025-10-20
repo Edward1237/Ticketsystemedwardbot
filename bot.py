@@ -617,7 +617,7 @@ class TicketPanelView(discord.ui.View):
             await interaction.followup.send(embed=create_embed("Ticket Created", f"Your standard ticket is ready: {channel.mention}", discord.Color.green()), ephemeral=True)
             embed = discord.Embed(title="🎫 Standard Support Ticket", description=f"Welcome, {interaction.user.mention}!\nPlease describe your question or issue in detail. A member of the {staff_role.mention} team will assist you shortly.", color=discord.Color.blue())
             # Let persistent view handle buttons by not passing view= here
-            await channel.send(embed=embed, content=f"{interaction.user.mention} {staff_role.mention}")
+            await channel.send(embed=embed, content=f"{interaction.user.mention} {staff_role.mention}", view=TicketCloseView(self.bot))
 
     @discord.ui.button(label="Tryout Application", style=discord.ButtonStyle.success, emoji="⚔️", custom_id="persistent_panel:tryout")
     async def tryout_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -658,7 +658,7 @@ class TicketPanelView(discord.ui.View):
             else: success_embed.add_field(name="Stats Screenshot", value="Not provided.", inline=False)
 
             # Let persistent view handle buttons
-            await channel.send(embed=success_embed)
+            await channel.send(embed=success_embed, view=TicketCloseView(self.bot))
 
         except asyncio.TimeoutError:
             timeout_embed = create_embed("Ticket Closed Automatically", "Inactivity during application.", discord.Color.red())
@@ -685,7 +685,7 @@ class TicketPanelView(discord.ui.View):
             await interaction.followup.send(embed=create_embed("Ticket Created", f"Report channel ready: {channel.mention}", discord.Color.green()), ephemeral=True)
             embed = discord.Embed(title="🚨 User Report", description=f"{interaction.user.mention}, provide info:\n1. Username\n2. Reason\n3. Details\n4. Proof\n{staff_role.mention} will review.", color=discord.Color.red())
             # Let persistent view handle buttons
-            await channel.send(embed=embed, content=f"{interaction.user.mention} {staff_role.mention}")
+            await channel.send(embed=embed, content=f"{interaction.user.mention} {staff_role.mention}", view=TicketCloseView(self.bot))
 
 # --- MODAL FOR TICKET CLOSE REASON ---
 class CloseReasonModal(discord.ui.Modal, title="Reason for Closing Ticket"):
