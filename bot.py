@@ -102,9 +102,22 @@ class TicketBot(commands.Bot):
 bot = TicketBot()
 
 # --- HELPER FUNCTIONS ---
-def create_embed(title: str = discord.Embed.Empty, description: str = discord.Embed.Empty, color: discord.Color = discord.Color.blurple()) -> discord.Embed:
-    # Allows omitting title/description, defaults color
-    return discord.Embed(title=title, description=str(description) if description is not discord.Embed.Empty else description, color=color)
+# --- HELPER FUNCTIONS ---
+
+def create_embed(title: str = None, description: str = None, color: discord.Color = discord.Color.blurple()) -> discord.Embed:
+    """Helper function to create a standard embed, handles None values."""
+    # Use None as default, pass discord.Embed.Empty *only* if the value is actually None
+    final_title = title if title is not None else discord.Embed.Empty
+    final_description = str(description) if description is not None else discord.Embed.Empty # Ensure description is string or Empty
+
+    # Add basic length check for description to avoid errors
+    if len(final_description) > 4096: # Discord embed description limit
+        print(f"Warning: Truncating embed description starting with: {final_description[:50]}...")
+        final_description = final_description[:4093] + "..."
+
+    return discord.Embed(title=final_title, description=final_description, color=color)
+
+# ... (rest of the code follows)
 
 async def send_embed_response(interaction: discord.Interaction, title: str = discord.Embed.Empty, description: str = discord.Embed.Empty, color: discord.Color = discord.Color.blurple(), ephemeral: bool = True):
     # Sends embed responses for interactions, handles state
