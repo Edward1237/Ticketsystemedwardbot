@@ -764,7 +764,7 @@ class TicketPanelView(discord.ui.View):
         if channel and staff_role:
             # Use followup since we deferred
             await interaction.followup.send(embed=create_embed("Ticket Created", f"{channel.mention}", discord.Color.green()), ephemeral=True)
-            embed = discord.Embed(title="🎫 Standard Ticket", description=f"Welcome, {interaction.user.mention}!\nDescribe issue. {staff_role.mention} will assist.", color=discord.Color.blue())
+            embed = discord.Embed(title="🎫 Standard Ticket", description=f"Welcome, {interaction.user.mention}!\nDescribe your issue. {staff_role.mention} will assist you as soon as possible.", color=discord.Color.blue())
             # Ensure bot instance is available for the view
             view_bot = self.bot or interaction.client
             await channel.send(embed=embed, content=f"{interaction.user.mention} {staff_role.mention}", view=TicketCloseView(bot=view_bot))
@@ -792,19 +792,19 @@ class TicketPanelView(discord.ui.View):
         # --- Tryout Application Logic (No Deletion) ---
         bot_msg_1 = None; username_msg = None; bot_msg_2 = None; stats_msg = None # Define vars outside try
         try:
-            username_embed = create_embed("⚔️ Tryout: Step 1/2", "Reply with Roblox Username.", discord.Color.green()).set_footer(text="5 min.")
+            username_embed = create_embed("⚔️ Tryout: Step 1/2", "Please provide your Roblox username.", discord.Color.green()).set_footer(text="Respond within 5 minutes.")
             bot_msg_1 = await channel.send(embed=username_embed)
             def check_username(m): return m.channel == channel and m.author == interaction.user and not m.author.bot
             username_msg = await self.bot.wait_for('message', check=check_username, timeout=300.0)
             roblox_username = username_msg.content
 
-            stats_embed = create_embed("⚔️ Tryout: Step 2/2", f"Username: `{roblox_username}`\nSend stats screenshot.", discord.Color.green()).set_footer(text="5 min, must be image.")
+            stats_embed = create_embed("⚔️ Tryout: Step 2/2", f"Username: `{roblox_username}`\nSend a screenshot of your stats from RIVALS.", discord.Color.green()).set_footer(text="Respond within 5 minutes. Message MUST contain an image attachment.")
             bot_msg_2 = await channel.send(embed=stats_embed)
             def check_stats(m): return m.channel == channel and m.author == interaction.user and not m.author.bot and m.attachments and m.attachments[0].content_type and m.attachments[0].content_type.startswith('image')
             stats_msg = await self.bot.wait_for('message', check=check_stats, timeout=300.0)
             stats_screenshot_url = stats_msg.attachments[0].url if stats_msg.attachments else None
 
-            success_embed = create_embed("✅ Tryout Complete!", f"{interaction.user.mention}, {staff_role.mention} will review.", discord.Color.brand_green())
+            success_embed = create_embed("✅ Tryout Application Complete!", f"Thanks for creating a tryout application,{interaction.user.mention}, {staff_role.mention} will review your application and get back to you with further detail.", discord.Color.brand_green())
             success_embed.add_field(name="Roblox Username", value=roblox_username, inline=False)
             if stats_screenshot_url:
                 try: success_embed.set_image(url=stats_screenshot_url)
@@ -850,7 +850,7 @@ class TicketPanelView(discord.ui.View):
         channel, staff_role = await create_ticket_channel(interaction, TICKET_TYPE, settings)
         if channel and staff_role:
             await interaction.followup.send(embed=create_embed("Ticket Created", f"{channel.mention}", discord.Color.green()), ephemeral=True) # Use followup
-            embed = discord.Embed(title="🚨 User Report", description=f"{interaction.user.mention}, provide user, reason, proof. {staff_role.mention} will assist.", color=discord.Color.red())
+            embed = discord.Embed(title="🚨 User Report", description=f"Welcome, {interaction.user.mention}, please provide the user, reason and proof. {staff_role.mention} will assist as soon as possible.", color=discord.Color.red())
             view_bot = self.bot or interaction.client
             await channel.send(embed=embed, content=f"{interaction.user.mention} {staff_role.mention}", view=TicketCloseView(bot=view_bot))
 
