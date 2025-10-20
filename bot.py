@@ -1425,89 +1425,90 @@ async def unblacklist(ctx: commands.Context, user: discord.Member):
 
 # --- ANNOUNCE COMMAND ---
 # --- UPDATED ANNOUNCE COMMAND ---
-@bot.hybrid_command(name="announce", description="Send an announcement (plain text or JSON embed).")
+# --- UPDATED ANNOUNCE COMMAND (Handles Multiple Images) ---
+@bot.hybrid_command(name="announce", description="Send announcement (text, images, or JSON embed).")
 @is_staff() # Make it staff-only
 @app_commands.describe(channel="Channel to announce in.", message="The announcement message (if not using JSON).")
-# Note: Slash commands handle attachments differently. This focuses on prefix command attachments.
-# To properly handle JSON *or* image attachments via slash, you'd need dedicated options.
+# Note: Slash command attachment handling requires specific setup not included here yet.
 async def announce(ctx: commands.Context, channel: discord.TextChannel, *, message: str = None):
-    """Sends plain text, or an embed from attached JSON, to the specified channel."""
+    """Sends plain text with optional images, or an embed from attached JSON."""
 
     embed_dict = None
     json_attachment = None
-    image_attachment = None
+    image_attachments = [] # Use a list to store multiple images
 
-    # 1. Check for attachments (Only reliable for prefix commands like this)
+    # 1. Check attachments (Primarily for prefix commands)
     if isinstance(ctx, commands.Context) and ctx.message.attachments:
-        attachment = ctx.message.attachments[0] # Use the first attachment
-        if attachment.filename.lower().endswith('.json'):
-            json_attachment = attachment
-        elif attachment.content_type and attachment.content_type.startswith("image/"):
-            image_attachment = attachment
-        else:
-            # Handle non-json, non-image attachments if desired (e.g., just link them)
-             pass # Or add embed field for non-image link
+        for attachment in ctx.message.attachments:
+            if attachment.filename.lower().endswith('.json') and json_attachment is None:
+                # Prioritize the first JSON file found
+                json_attachment = attachment
+                print(f"Found JSON attachment: {attachment.filename}")
+                # If we find JSON, we will ignore images and message text
+                break # Stop checking once JSON is found
+            elif attachment.content_type and attachment.content_type.startswith("image/"):
+                image_attachments.append(attachment)
+                print(f"Found image attachment: {attachment.filename}")
+            # else: # Handle other file types if needed
+            #    print(f"Found other attachment type: {attachment.filename}")
 
-    # 2. Process JSON if present
+    # 2. Process JSON if found (takes priority)
     if json_attachment:
         try:
             json_bytes = await json_attachment.read()
             embed_data = json.loads(json_bytes.decode('utf-8'))
-            # Basic validation: Check if it's a dictionary
-            if not isinstance(embed_data, dict):
-                 raise ValueError("JSON content is not a valid object/dictionary.")
-            embed_dict = embed_data # Store the dictionary to create embed later
+            if not isinstance(embed_data, dict): raise ValueError("JSON content is not a valid object.")
+            embed_dict = embed_data
             print(f"Loaded embed data from {json_attachment.filename}")
-        except json.JSONDecodeError as e:
-            await send_embed_response(ctx, "Error", f"Invalid JSON file: {e}", discord.Color.red(), ephemeral=True)
-            return
-        except ValueError as e:
-            await send_embed_response(ctx, "Error", f"JSON Error: {e}", discord.Color.red(), ephemeral=True)
-            return
+            message = None # Clear message if using JSON embed
+            image_attachments = [] # Clear images if using JSON embed
         except Exception as e:
-            await send_embed_response(ctx, "Error", f"Failed to read/process JSON attachment: {e}", discord.Color.red(), ephemeral=True)
-            return
+            await send_embed_response(ctx, "Error", f"Failed to process JSON: {e}", discord.Color.red(), ephemeral=True); return
 
     # 3. Handle message content (only if not sending JSON embed)
     if embed_dict is None:
-        if message is None:
-            # Require message if no valid JSON attachment was provided
-            await send_embed_response(ctx, "Error", "You must provide a message or attach a valid JSON embed file.", discord.Color.orange(), ephemeral=True)
-            return
-        # Prepare plain text message content
-        content_to_send = message
+        if message is None and not image_attachments: # Require message only if no JSON AND no images
+            await send_embed_response(ctx, "Error", "You must provide message text, attach image(s), or attach a JSON embed file.", discord.Color.orange(), ephemeral=True); return
+        content_to_send = message # Use the provided message text (can be None if only sending images)
     else:
-        # If sending JSON embed, ignore the text message argument (or maybe use it as content?)
-        # Let's ignore it for now. Content can be in the JSON if needed.
-        content_to_send = None # Send only the embed
+        content_to_send = None # Send only the embed if JSON was loaded
 
-    # 4. Send the message/embed
+    # 4. Prepare image files if any
+    files_to_send = []
+    if image_attachments:
+        if len(image_attachments) > 10:
+             await send_embed_response(ctx, "Error", "Cannot attach more than 10 images at once.", discord.Color.orange(), ephemeral=True); return
+        print(f"Preparing {len(image_attachments)} image files...")
+        for img_att in image_attachments:
+            try:
+                img_bytes = await img_att.read()
+                img_file = discord.File(io.BytesIO(img_bytes), filename=img_att.filename)
+                files_to_send.append(img_file)
+            except Exception as e:
+                print(f"Error reading image attachment {img_att.filename}: {e}")
+                await send_embed_response(ctx, "Warning", f"Could not process image: {img_att.filename}", discord.Color.yellow(), ephemeral=True)
+                # Continue without the failed image
+
+    # 5. Send the message/embed/files
     try:
         if embed_dict:
-            # Create embed from dictionary
             final_embed = discord.Embed.from_dict(embed_dict)
-            await channel.send(embed=final_embed)
-        else:
-            # Send plain text, and optionally the image file
-            if image_attachment:
-                 # Download image and send as file for better display
-                 image_bytes = await image_attachment.read()
-                 img_file = discord.File(io.BytesIO(image_bytes), filename=image_attachment.filename)
-                 await channel.send(content=content_to_send, file=img_file)
-            else:
-                 await channel.send(content=content_to_send)
+            await channel.send(embed=final_embed) # Send only JSON embed
+        elif files_to_send:
+            # Send text content (if any) along with multiple image files
+            await channel.send(content=content_to_send, files=files_to_send)
+        elif content_to_send:
+             # Send only plain text message
+             await channel.send(content=content_to_send)
+        # Else: Should have been caught by check in step 3
 
         await send_embed_response(ctx, "Announcement Sent", f"Message sent to {channel.mention}.", discord.Color.green(), ephemeral=True)
 
-    except discord.Forbidden:
-        await send_embed_response(ctx, "Error", f"I don't have permission to send messages/embeds/files in {channel.mention}.", discord.Color.red(), ephemeral=True)
-    except discord.HTTPException as e:
-         # Catch potential embed errors (e.g., invalid fields in JSON)
-         await send_embed_response(ctx, "Error", f"Failed to send message/embed: {e}", discord.Color.red(), ephemeral=True)
-    except Exception as e:
-        print(f"Error in announce command: {e}")
-        traceback.print_exc()
-        await send_embed_response(ctx, "Error", f"An unexpected error occurred: {e}", discord.Color.red(), ephemeral=True)
+    except discord.Forbidden: await send_embed_response(ctx, "Error", f"No permission in {channel.mention}.", discord.Color.red(), ephemeral=True)
+    except discord.HTTPException as e: await send_embed_response(ctx, "Error", f"Failed to send: {e}", discord.Color.red(), ephemeral=True)
+    except Exception as e: print(f"Error in announce send: {e}"); traceback.print_exc(); await send_embed_response(ctx, "Error", f"Unexpected error: {e}", discord.Color.red(), ephemeral=True)
+
+# --- (Rest of your bot code below) ---
 
 # --- (Rest of your bot code below) ---
 
