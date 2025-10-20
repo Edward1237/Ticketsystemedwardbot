@@ -686,16 +686,65 @@ def in_ticket_channel():
     return commands.check(predicate)
 
 # --- HELP COMMAND ---
+# --- HELP COMMAND ---
 @bot.command(name="help")
-@commands.guild_only() @is_staff()
-async def help_command(ctx: commands.Context):
-    settings = bot.get_guild_settings(ctx.guild.id); prefix = settings.get("prefix", "!")
-    embed = discord.Embed(title="🛠️ Staff Help", description=f"Prefix: `{prefix}`", color=discord.Color.blue())
-    embed.add_field(name="Setup (Admin)", value="`/set_panel_channel`\n`/set_ticket_category`\n`/set_archive_category`\n`/set_staff_role`\n`/set_escalation_role`\n`/set_appeal_channel`\n`/set_prefix`\n`/create_panel`", inline=False)
-    embed.add_field(name="Tickets (Staff)", value=f"`{prefix}close` (Use button)\n`{prefix}add @user`\n`{prefix}remove @user`\n`{prefix}rename <name>`\n`{prefix}claim`\n`{prefix}unclaim`\n`{prefix}escalate`\n`{prefix}purge <amount>`\n`{prefix}help`", inline=False)
-    embed.add_field(name="Moderation (Admin)", value=f"`{prefix}blacklist @user <reason>`\n`{prefix}unblacklist @user`\n`/announce <#channel> <message>`\n`/ticket_stats`", inline=False)
-    embed.set_footer(text="Use buttons too (Close/Delete/Approve/Reject)")
-    await ctx.send(embed=embed, ephemeral=True)
+@commands.guild_only() # <<< 4 SPACES
+@is_staff() # <<< 4 SPACES
+async def help_command(ctx: commands.Context): # <<< 4 SPACES
+    """Shows the staff help menu for the bot."""
+    settings = bot.get_guild_settings(ctx.guild.id) # <<< 8 SPACES
+    prefix = settings.get("prefix", "!") # <<< 8 SPACES
+
+    embed = discord.Embed( # <<< 8 SPACES
+        title="🛠️ Staff Help",
+        description=f"Prefix: `{prefix}`",
+        color=discord.Color.blue()
+    )
+
+    embed.add_field( # <<< 8 SPACES
+        name="Setup (Admin)",
+        value=(
+            "`/set_panel_channel`\n"
+            "`/set_ticket_category`\n"
+            "`/set_archive_category`\n"
+            "`/set_staff_role`\n"
+            "`/set_escalation_role`\n"
+            "`/set_appeal_channel`\n"
+            f"`{prefix}setprefix` or `/set_prefix`\n"
+            "`/create_panel`"
+        ),
+        inline=False
+    )
+
+    embed.add_field( # <<< 8 SPACES
+        name="Tickets (Staff)",
+        value=(
+            f"`{prefix}close` (Use button)\n"
+            f"`{prefix}add @user`\n"
+            f"`{prefix}remove @user`\n"
+            f"`{prefix}rename <name>`\n"
+            f"`{prefix}claim`\n"
+            f"`{prefix}unclaim`\n"
+            f"`{prefix}escalate`\n"
+            f"`{prefix}purge <amount>`\n"
+            f"`{prefix}help`"
+        ),
+        inline=False
+    )
+
+    embed.add_field( # <<< 8 SPACES
+        name="Moderation (Admin)",
+        value=(
+            f"`{prefix}blacklist @user <reason>`\n"
+            f"`{prefix}unblacklist @user`\n"
+            "`/announce <#channel> <message>`\n"
+            "`/ticket_stats`"
+        ),
+        inline=False
+    )
+
+    embed.set_footer(text="Use buttons too (Close/Delete/Approve/Reject)") # <<< 8 SPACES
+    await ctx.send(embed=embed, ephemeral=True) # <<< 8 SPACES
 
 # --- STANDARD TICKET COMMANDS ---
 @bot.command(name="close")
